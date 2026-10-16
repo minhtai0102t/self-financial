@@ -11,6 +11,7 @@ export function buildAuthOptions(env: AuthEnv) {
     appName: "Self Financial",
     baseURL: env.baseURL,
     secret: env.secret,
+    trustedOrigins: [...env.trustedOrigins],
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 6,

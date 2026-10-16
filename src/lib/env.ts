@@ -56,6 +56,7 @@ export interface ProviderCredentials {
 export interface AuthEnv {
   readonly secret: string;
   readonly baseURL: string;
+  readonly trustedOrigins: readonly string[];
   readonly providers: {
     readonly google?: ProviderCredentials;
     readonly github?: ProviderCredentials;
@@ -77,11 +78,30 @@ export function parseAuthEnv(source: Record<string, string | undefined>): AuthEn
       ? rawSecret
       : "self-financial-fallback-secret-key-at-least-32-chars";
 
+  const vercelProdHost = source.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  const vercelPreviewHost = source.VERCEL_URL?.trim();
+  const vercelOrigin = vercelProdHost
+    ? `https://${vercelProdHost}`
+    : vercelPreviewHost
+      ? `https://${vercelPreviewHost}`
+      : undefined;
+
   const rawBaseUrl = source.BETTER_AUTH_URL?.trim();
-  let baseURL = "http://localhost:3000";
+  let baseURL = vercelOrigin ?? "http://localhost:3000";
   if (rawBaseUrl && URL.canParse(rawBaseUrl)) {
-    baseURL = new URL(rawBaseUrl).origin;
+    const parsedOrigin = new URL(rawBaseUrl).origin;
+    // On Vercel, if BETTER_AUTH_URL was accidentally copied as http://localhost:3000, prefer the live Vercel HTTPS origin
+    if (vercelOrigin && parsedOrigin.startsWith("http://localhost")) {
+      baseURL = vercelOrigin;
+    } else {
+      baseURL = parsedOrigin;
+    }
   }
+
+  const trustedSet = new Set<string>([baseURL]);
+  if (vercelProdHost) trustedSet.add(`https://${vercelProdHost}`);
+  if (vercelPreviewHost) trustedSet.add(`https://${vercelPreviewHost}`);
+  trustedSet.add("https://*.vercel.app");
 
   const googleId = cleanCredential(source.GOOGLE_CLIENT_ID);
   const googleSecret = cleanCredential(source.GOOGLE_CLIENT_SECRET);
@@ -96,6 +116,7 @@ export function parseAuthEnv(source: Record<string, string | undefined>): AuthEn
   return {
     secret,
     baseURL,
+    trustedOrigins: [...trustedSet],
     providers: {
       ...(google && { google }),
       ...(github && { github }),

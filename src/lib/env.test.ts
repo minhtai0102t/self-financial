@@ -52,5 +52,15 @@ describe("parseAuthEnv", () => {
     expect(authEnv.secret.length).toBeGreaterThanOrEqual(32);
     expect(authEnv.baseURL).toBe("http://localhost:3000");
   });
+
+  it("uses VERCEL_PROJECT_PRODUCTION_URL when deployed on Vercel with localhost BETTER_AUTH_URL", () => {
+    const authEnv = parseAuthEnv({
+      BETTER_AUTH_URL: "http://localhost:3000",
+      VERCEL_PROJECT_PRODUCTION_URL: "self-financial.vercel.app",
+      VERCEL_URL: "self-financial-git-main.vercel.app",
+    });
+    expect(authEnv.baseURL).toBe("https://self-financial.vercel.app");
+    expect(authEnv.trustedOrigins).toContain("https://self-financial-git-main.vercel.app");
+  });
 });
 

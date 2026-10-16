@@ -8,6 +8,7 @@ describe("configuredProviders", () => {
     const providers = configuredProviders({
       secret: "x".repeat(32),
       baseURL: "http://localhost:3000",
+      trustedOrigins: ["http://localhost:3000"],
       providers: {
         google: { clientId: "gid", clientSecret: "gsecret" },
       },
