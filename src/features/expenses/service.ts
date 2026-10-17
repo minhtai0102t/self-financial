@@ -4,7 +4,9 @@ import { z } from "zod";
 
 import {
   buildExpenseAnalytics,
+  type DashboardPeriod,
   type ExpenseAnalyticsSnapshot,
+  resolvePeriodStart,
 } from "@/features/expenses/analytics";
 import {
   formatVnd,
@@ -23,7 +25,7 @@ import {
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 
-export type DashboardPeriod = "today" | "7d" | "30d" | "month" | "all";
+export type { DashboardPeriod } from "@/features/expenses/analytics";
 
 export interface SerializedExpense {
   readonly id: string;
@@ -109,25 +111,6 @@ function serializeExpenseRow(row: {
     spentAt: row.spentAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
-}
-
-function resolvePeriodStart(period: DashboardPeriod): Date | undefined {
-  const now = new Date();
-  if (period === "today") {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    return start;
-  }
-  if (period === "7d") {
-    return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  }
-  if (period === "30d") {
-    return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  }
-  if (period === "month") {
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  }
-  return undefined;
 }
 
 /**

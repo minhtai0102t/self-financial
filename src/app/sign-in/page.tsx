@@ -1,4 +1,4 @@
-import { AlertTriangle, KeyRound, Mail, Sparkles, UserPlus, Wallet } from "lucide-react";
+import { AlertTriangle, Wallet } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -38,124 +38,113 @@ export default async function SignInPage({
   const errorMessage = signInErrorMessage(firstValue(query.error));
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-center px-4 py-8 pt-safe pb-safe">
-      <div className="mx-auto w-full max-w-md space-y-6">
-        {/* Brand Header */}
-        <div className="text-center space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-700 text-white shadow-sm">
-            <Wallet className="h-6 w-6" />
+    <div className="min-h-screen bg-zinc-50 flex flex-col justify-center px-4 py-10 pt-safe pb-safe">
+      <div className="mx-auto w-full max-w-sm space-y-6">
+        {/* Minimal Brand Header */}
+        <div className="space-y-1.5">
+          <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-900 text-white">
+            <Wallet className="h-4 w-4" />
           </div>
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200">
-            <Sparkles className="h-3.5 w-3.5" />
-            AI Personal Spending Tracker
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            {mode === "signup" ? "Create your account" : "Sign in to Self Financial"}
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 pt-1">
+            {mode === "signup" ? "Create account" : "Self Financial"}
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Log daily VND expenses in plain text and track Must have, Nice to have, and Wasted spending.
+          <p className="text-xs text-zinc-500">
+            Minimalist VND spending tracker &amp; value analyzer.
           </p>
         </div>
 
-        {/* Card */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-5">
+        {/* Minimal Card */}
+        <div className="rounded-xl border border-zinc-200/90 bg-white p-5 space-y-4">
           {/* Mode Switcher Tabs */}
-          <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+          <div className="grid grid-cols-2 rounded-lg bg-zinc-100 p-0.5 text-xs font-medium">
             <Link
               href={`/sign-in?next=${encodeURIComponent(next)}`}
-              className={`flex min-h-9 items-center justify-center rounded-lg transition ${
+              className={`flex min-h-8 items-center justify-center rounded-md transition ${
                 mode === "signin"
-                  ? "bg-white text-slate-900 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-white text-zinc-900 shadow-2xs"
+                  : "text-zinc-500 hover:text-zinc-900"
               }`}
             >
-              Sign In
+              Sign in
             </Link>
             <Link
               href={`/sign-in?mode=signup&next=${encodeURIComponent(next)}`}
-              className={`flex min-h-9 items-center justify-center rounded-lg transition ${
+              className={`flex min-h-8 items-center justify-center rounded-md transition ${
                 mode === "signup"
-                  ? "bg-white text-slate-900 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-white text-zinc-900 shadow-2xs"
+                  : "text-zinc-500 hover:text-zinc-900"
               }`}
             >
-              Create Account
+              Create account
             </Link>
           </div>
 
           {errorMessage && (
             <div
               role="alert"
-              className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs text-rose-900"
+              className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-2.5 text-xs text-rose-800"
             >
-              <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-600 mt-0.5" />
               <span>{errorMessage}</span>
             </div>
           )}
 
-          {/* Email & Password Form (Works natively in iOS Home Screen PWA + Keychain) */}
           {mode === "signin" ? (
-            <form action={signInWithEmail} className="space-y-3.5">
+            <form action={signInWithEmail} className="space-y-3">
               <input type="hidden" name="next" value={next} />
               <div>
                 <label
                   htmlFor="signin-email"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
+                  className="block text-xs font-medium text-zinc-600 mb-1"
                 >
-                  Email address
+                  Email
                 </label>
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                  <input
-                    id="signin-email"
-                    name="email"
-                    type="email"
-                    required
-                    autoComplete="username"
-                    placeholder="you@example.com"
-                    className="w-full min-h-11 rounded-xl border border-slate-300 bg-slate-50/50 pl-9 pr-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-hidden"
-                  />
-                </div>
+                <input
+                  id="signin-email"
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="username"
+                  placeholder="you@example.com"
+                  className="w-full min-h-10 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:bg-white focus:outline-hidden"
+                />
               </div>
 
               <div>
                 <label
                   htmlFor="signin-password"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
+                  className="block text-xs font-medium text-zinc-600 mb-1"
                 >
                   Password
                 </label>
-                <div className="relative">
-                  <KeyRound className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                  <input
-                    id="signin-password"
-                    name="password"
-                    type="password"
-                    required
-                    minLength={6}
-                    autoComplete="current-password"
-                    placeholder="••••••••"
-                    className="w-full min-h-11 rounded-xl border border-slate-300 bg-slate-50/50 pl-9 pr-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-hidden"
-                  />
-                </div>
+                <input
+                  id="signin-password"
+                  name="password"
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  className="w-full min-h-10 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:bg-white focus:outline-hidden"
+                />
               </div>
 
               <button
                 type="submit"
-                className="w-full min-h-11 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-800 active:scale-99 transition"
+                className="w-full min-h-10 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 active:scale-99 transition"
               >
-                Sign In
+                Sign in
               </button>
             </form>
           ) : (
-            <form action={signUpWithEmail} className="space-y-3.5">
+            <form action={signUpWithEmail} className="space-y-3">
               <input type="hidden" name="next" value={next} />
               <div>
                 <label
                   htmlFor="signup-name"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
+                  className="block text-xs font-medium text-zinc-600 mb-1"
                 >
-                  Your name
+                  Name
                 </label>
                 <input
                   id="signup-name"
@@ -164,16 +153,16 @@ export default async function SignInPage({
                   required
                   autoComplete="name"
                   placeholder="Minh Tai"
-                  className="w-full min-h-11 rounded-xl border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-hidden"
+                  className="w-full min-h-10 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:bg-white focus:outline-hidden"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="signup-email"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
+                  className="block text-xs font-medium text-zinc-600 mb-1"
                 >
-                  Email address
+                  Email
                 </label>
                 <input
                   id="signup-email"
@@ -182,16 +171,16 @@ export default async function SignInPage({
                   required
                   autoComplete="email"
                   placeholder="you@example.com"
-                  className="w-full min-h-11 rounded-xl border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-hidden"
+                  className="w-full min-h-10 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:bg-white focus:outline-hidden"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="signup-password"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
+                  className="block text-xs font-medium text-zinc-600 mb-1"
                 >
-                  Password (min 6 characters)
+                  Password
                 </label>
                 <input
                   id="signup-password"
@@ -201,32 +190,28 @@ export default async function SignInPage({
                   minLength={6}
                   autoComplete="new-password"
                   placeholder="At least 6 characters"
-                  className="w-full min-h-11 rounded-xl border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-hidden"
+                  className="w-full min-h-10 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:bg-white focus:outline-hidden"
                 />
               </div>
 
               <button
                 type="submit"
-                className="inline-flex w-full min-h-11 items-center justify-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-800 active:scale-99 transition"
+                className="w-full min-h-10 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 active:scale-99 transition"
               >
-                <UserPlus className="h-4 w-4" />
-                Create Account &amp; Continue
+                Create account
               </button>
             </form>
           )}
 
-          {/* OAuth Social Providers (e.g. Google from Interview-bank) */}
           {providers.length > 0 && (
             <>
-              <div className="relative flex items-center py-1">
-                <div className="grow border-t border-slate-200" />
-                <span className="mx-3 shrink-0 text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                  Or continue with
-                </span>
-                <div className="grow border-t border-slate-200" />
+              <div className="relative flex items-center py-0.5">
+                <div className="grow border-t border-zinc-100" />
+                <span className="mx-2.5 shrink-0 text-[11px] text-zinc-400">or</span>
+                <div className="grow border-t border-zinc-100" />
               </div>
 
-              <ul className="space-y-2.5">
+              <ul className="space-y-2">
                 {providers.map(({ id, label }) => (
                   <li key={id}>
                     <form action={signInWithProvider}>
@@ -234,7 +219,7 @@ export default async function SignInPage({
                       <input type="hidden" name="next" value={next} />
                       <button
                         type="submit"
-                        className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 active:scale-99 transition"
+                        className="min-h-10 w-full rounded-lg border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 active:scale-99 transition"
                       >
                         Continue with {label}
                       </button>

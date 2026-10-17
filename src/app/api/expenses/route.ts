@@ -7,7 +7,15 @@ import {
 } from "@/features/expenses/service";
 import { getCurrentActor } from "@/lib/current-actor";
 
-const VALID_PERIODS = new Set<DashboardPeriod>(["today", "7d", "30d", "month", "all"]);
+const VALID_PERIODS = new Set<DashboardPeriod>([
+  "today",
+  "7d",
+  "30d",
+  "month",
+  "quarter",
+  "year",
+  "all",
+]);
 
 export async function GET(request: Request) {
   try {

@@ -6,6 +6,17 @@ import {
   TIER_METADATA,
 } from "@/features/expenses/format";
 
+export type DashboardPeriod =
+  | "today"
+  | "7d"
+  | "30d"
+  | "month"
+  | "quarter"
+  | "year"
+  | "all";
+
+export type ReportHorizon = "daily" | "monthly" | "quarterly" | "yearly";
+
 export interface AnalyticsExpenseItem {
   readonly id: string;
   readonly title: string;
@@ -46,6 +57,22 @@ export interface DailySpendPoint {
   readonly count: number;
 }
 
+export interface PeriodSummaryBucket {
+  readonly key: string;
+  readonly label: string;
+  readonly totalVnd: number;
+  readonly formattedTotal: string;
+  readonly mustHaveVnd: number;
+  readonly niceToHaveVnd: number;
+  readonly wastedVnd: number;
+  readonly mustHavePct: number;
+  readonly niceToHavePct: number;
+  readonly wastedPct: number;
+  readonly count: number;
+  readonly averagePerItemVnd: number;
+  readonly changePct: number | null;
+}
+
 export interface FinancialInsight {
   readonly id: string;
   readonly tone: "good" | "warning" | "danger" | "neutral";
@@ -62,7 +89,70 @@ export interface ExpenseAnalyticsSnapshot {
   readonly byTier: Record<SpendingTierValue, TierBreakdownItem>;
   readonly byCategory: CategoryBreakdownItem[];
   readonly dailySeries: DailySpendPoint[];
+  readonly monthlySeries: PeriodSummaryBucket[];
+  readonly quarterlySeries: PeriodSummaryBucket[];
+  readonly yearlySeries: PeriodSummaryBucket[];
   readonly insights: FinancialInsight[];
+}
+
+const MONTH_SHORT_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+export function resolvePeriodStart(
+  period: DashboardPeriod,
+  now: Date = new Date(),
+): Date | undefined {
+  if (period === "today") {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+  if (period === "7d") {
+    return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  }
+  if (period === "30d") {
+    return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
+  if (period === "month") {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+  if (period === "quarter") {
+    const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+    return new Date(now.getFullYear(), quarterStartMonth, 1);
+  }
+  if (period === "year") {
+    return new Date(now.getFullYear(), 0, 1);
+  }
+  return undefined;
+}
+
+export function filterExpensesByPeriod<T extends { readonly spentAt: Date | string }>(
+  items: readonly T[],
+  period: DashboardPeriod,
+  now: Date = new Date(),
+): T[] {
+  const start = resolvePeriodStart(period, now);
+  if (!start) {
+    return [...items];
+  }
+  const startMs = start.getTime();
+  return items.filter((item) => {
+    const itemDate = item.spentAt instanceof Date ? item.spentAt : new Date(item.spentAt);
+    const ms = itemDate.getTime();
+    return Number.isFinite(ms) && ms >= startMs;
+  });
 }
 
 function toIsoDateKey(value: Date | string): string {
@@ -76,6 +166,67 @@ function toIsoDateKey(value: Date | string): string {
 function roundPct(part: number, total: number): number {
   if (total <= 0) return 0;
   return Math.round((part / total) * 1000) / 10;
+}
+
+interface RawPeriodAccumulator {
+  label: string;
+  totalVnd: number;
+  mustHaveVnd: number;
+  niceToHaveVnd: number;
+  wastedVnd: number;
+  count: number;
+}
+
+function finalizePeriodSeries(
+  map: Map<string, RawPeriodAccumulator>,
+): PeriodSummaryBucket[] {
+  const sortedEntries = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return sortedEntries.map(([key, bucket], idx) => {
+    const prev = idx > 0 ? sortedEntries[idx - 1]?.[1] : undefined;
+    const changePct =
+      prev && prev.totalVnd > 0
+        ? Math.round(((bucket.totalVnd - prev.totalVnd) / prev.totalVnd) * 1000) / 10
+        : null;
+
+    return {
+      key,
+      label: bucket.label,
+      totalVnd: bucket.totalVnd,
+      formattedTotal: formatVnd(bucket.totalVnd),
+      mustHaveVnd: bucket.mustHaveVnd,
+      niceToHaveVnd: bucket.niceToHaveVnd,
+      wastedVnd: bucket.wastedVnd,
+      mustHavePct: roundPct(bucket.mustHaveVnd, bucket.totalVnd),
+      niceToHavePct: roundPct(bucket.niceToHaveVnd, bucket.totalVnd),
+      wastedPct: roundPct(bucket.wastedVnd, bucket.totalVnd),
+      count: bucket.count,
+      averagePerItemVnd:
+        bucket.count > 0 ? Math.round(bucket.totalVnd / bucket.count) : 0,
+      changePct,
+    };
+  });
+}
+
+function addItemToPeriodAccumulator(
+  map: Map<string, RawPeriodAccumulator>,
+  key: string,
+  label: string,
+  item: AnalyticsExpenseItem,
+): void {
+  const existing = map.get(key) ?? {
+    label,
+    totalVnd: 0,
+    mustHaveVnd: 0,
+    niceToHaveVnd: 0,
+    wastedVnd: 0,
+    count: 0,
+  };
+  existing.totalVnd += item.amountVnd;
+  existing.count += 1;
+  if (item.tier === "MUST_HAVE") existing.mustHaveVnd += item.amountVnd;
+  if (item.tier === "NICE_TO_HAVE") existing.niceToHaveVnd += item.amountVnd;
+  if (item.tier === "WASTED") existing.wastedVnd += item.amountVnd;
+  map.set(key, existing);
 }
 
 export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): ExpenseAnalyticsSnapshot {
@@ -107,6 +258,9 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
       count: number;
     }
   >();
+  const monthlyMap = new Map<string, RawPeriodAccumulator>();
+  const quarterlyMap = new Map<string, RawPeriodAccumulator>();
+  const yearlyMap = new Map<string, RawPeriodAccumulator>();
 
   for (const item of items) {
     const tierBucket = tierTotals[item.tier];
@@ -137,6 +291,21 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
     if (item.tier === "NICE_TO_HAVE") existingDay.niceToHaveVnd += item.amountVnd;
     if (item.tier === "WASTED") existingDay.wastedVnd += item.amountVnd;
     dailyMap.set(dateKey, existingDay);
+
+    const yearStr = dateKey.slice(0, 4);
+    const monthStr = dateKey.slice(5, 7);
+    const monthNum = Math.max(1, Math.min(12, Number(monthStr) || 1));
+    const quarterNum = Math.floor((monthNum - 1) / 3) + 1;
+
+    const monthKey = `${yearStr}-${monthStr}`;
+    const monthLabel = `${MONTH_SHORT_NAMES[monthNum - 1]} ${yearStr}`;
+    addItemToPeriodAccumulator(monthlyMap, monthKey, monthLabel, item);
+
+    const quarterKey = `${yearStr}-Q${quarterNum}`;
+    const quarterLabel = `Q${quarterNum} ${yearStr}`;
+    addItemToPeriodAccumulator(quarterlyMap, quarterKey, quarterLabel, item);
+
+    addItemToPeriodAccumulator(yearlyMap, yearStr, yearStr, item);
   }
 
   const byTier = {} as Record<SpendingTierValue, TierBreakdownItem>;
@@ -182,6 +351,10 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
       ...data,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
+
+  const monthlySeries = finalizePeriodSeries(monthlyMap);
+  const quarterlySeries = finalizePeriodSeries(quarterlyMap);
+  const yearlySeries = finalizePeriodSeries(yearlyMap);
 
   const activeDays = Math.max(1, dailySeries.length);
   const averageDailyVnd = expenseCount > 0 ? Math.round(totalVnd / activeDays) : 0;
@@ -254,6 +427,9 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
     byTier,
     byCategory,
     dailySeries,
+    monthlySeries,
+    quarterlySeries,
+    yearlySeries,
     insights,
   };
 }
