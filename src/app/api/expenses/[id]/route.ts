@@ -17,9 +17,17 @@ export async function PATCH(
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
     const { id } = await context.params;
-    const patch = await request.json();
+    const patch = (await request.json()) as Record<string, unknown>;
+    const skipSnapshot =
+      patch.includeSnapshot === false || searchParams.get("includeSnapshot") === "0";
+
     const updated = await updateExpenseItem(id, patch, actor.userId);
+    if (skipSnapshot) {
+      return NextResponse.json({ expense: updated });
+    }
+
     const snapshot = await getDashboardSnapshot({ period: "all", userId: actor.userId });
 
     return NextResponse.json({ expense: updated, snapshot });
@@ -30,7 +38,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -39,8 +47,15 @@ export async function DELETE(
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const skipSnapshot = searchParams.get("includeSnapshot") === "0";
     const { id } = await context.params;
     await deleteExpenseItem(id, actor.userId);
+
+    if (skipSnapshot) {
+      return NextResponse.json({ deleted: true });
+    }
+
     const snapshot = await getDashboardSnapshot({ period: "all", userId: actor.userId });
 
     return NextResponse.json({ deleted: true, snapshot });

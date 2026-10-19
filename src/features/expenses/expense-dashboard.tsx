@@ -25,11 +25,15 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { signOut } from "@/features/auth/actions";
 import type { DashboardPeriod } from "@/features/expenses/analytics";
 import {
+  applyOptimisticExpenseCreate,
   applyOptimisticExpenseDelete,
   applyOptimisticExpensePatch,
+  buildOptimisticExpensesFromInput,
   deriveSnapshotForPeriod,
   readCachedParsePreview,
   readCachedSnapshot,
+  reconcileOptimisticExpenseCreate,
+  rollbackOptimisticExpenseCreate,
   writeCachedParsePreview,
   writeCachedSnapshot,
 } from "@/features/expenses/client-cache";
@@ -49,6 +53,7 @@ import {
 } from "@/features/expenses/quick-input";
 import type {
   DashboardSnapshot,
+  SerializedBatch,
   SerializedExpense,
 } from "@/features/expenses/service";
 import { SpendReportPanel } from "@/features/expenses/spend-report-panel";
@@ -210,6 +215,22 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
       return;
     }
 
+    // Instant 0ms local + historical enrichment preview when high-confidence
+    const localPlan = buildOptimisticExpensesFromInput({
+      rawInput: trimmed,
+      spentAtIso: new Date().toISOString(),
+      existingExpenses: allSnapshot.expenses,
+    });
+    if (localPlan.isHighConfidence && localPlan.candidates.length > 0) {
+      setPreviewItems(localPlan.candidates);
+      setPreviewModel(localPlan.modelUsed);
+      writeCachedParsePreview(trimmed, {
+        items: localPlan.candidates,
+        modelUsed: localPlan.modelUsed,
+      });
+      return;
+    }
+
     setIsParsing(true);
     setFeedback(null);
     try {
@@ -257,31 +278,161 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
       return;
     }
 
+    const spentAtIso = spentAtDate
+      ? new Date(`${spentAtDate}T12:00:00`).toISOString()
+      : new Date().toISOString();
+
+    const optimisticPlan = buildOptimisticExpensesFromInput({
+      rawInput: trimmed,
+      spentAtIso,
+      previewItems,
+      previewModel,
+      existingExpenses: allSnapshot.expenses,
+    });
+
+    // Fast path: 0ms optimistic UI insertion + non-blocking background persistence
+    if (optimisticPlan.optimisticExpenses.length > 0) {
+      const optimisticIds = optimisticPlan.optimisticExpenses.map((item) => item.id);
+      const optimisticBatchId = optimisticPlan.batchId;
+
+      setAllSnapshot((prev) => {
+        const next = applyOptimisticExpenseCreate(
+          prev,
+          optimisticPlan.optimisticExpenses,
+          {
+            id: optimisticBatchId,
+            rawInput: trimmed,
+            aiModel: optimisticPlan.modelUsed,
+          },
+        );
+        writeCachedSnapshot(userCacheKey, next);
+        return next;
+      });
+
+      setRawInput("");
+      setPreviewItems(null);
+      setPreviewModel(null);
+
+      const initialSummary = optimisticPlan.optimisticExpenses
+        .map((item) => `${item.title}: ${item.formattedAmount} (${item.tierLabel})`)
+        .join(" · ");
+
+      setFeedback({
+        tone: "success",
+        message: `Logged ${optimisticPlan.optimisticExpenses.length} item(s): ${initialSummary}`,
+      });
+
+      setIsSyncing(true);
+      try {
+        const response = await fetch("/api/expenses?includeSnapshot=0", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rawInput: trimmed,
+            spentAt: spentAtIso,
+            includeSnapshot: false,
+            ...(optimisticPlan.isHighConfidence
+              ? {
+                  items: optimisticPlan.candidates,
+                  modelUsed: optimisticPlan.modelUsed,
+                }
+              : {}),
+          }),
+        });
+
+        const data = (await response.json()) as {
+          expenses?: SerializedExpense[];
+          batch?: SerializedBatch;
+          modelUsed?: string;
+          snapshot?: DashboardSnapshot;
+          error?: string;
+        };
+
+        if (!response.ok || (!data.expenses && !data.snapshot)) {
+          setAllSnapshot((prev) => {
+            const rolledBack = rollbackOptimisticExpenseCreate(
+              prev,
+              optimisticIds,
+              optimisticBatchId,
+            );
+            writeCachedSnapshot(userCacheKey, rolledBack);
+            return rolledBack;
+          });
+          setRawInput((prev) => (prev.trim() ? prev : trimmed));
+          setFeedback({
+            tone: "error",
+            message: data.error ?? "Failed to save expenses.",
+          });
+          return;
+        }
+
+        setAllSnapshot((prev) => {
+          const reconciled = data.snapshot
+            ? data.snapshot
+            : reconcileOptimisticExpenseCreate(
+                prev,
+                optimisticIds,
+                data.expenses ?? [],
+                data.batch,
+                optimisticBatchId,
+              );
+          writeCachedSnapshot(userCacheKey, reconciled);
+          return reconciled;
+        });
+
+        if (data.expenses && data.expenses.length > 0 && !optimisticPlan.isHighConfidence) {
+          const refinedSummary = data.expenses
+            .map((item) => `${item.title}: ${item.formattedAmount} (${item.tierLabel})`)
+            .join(" · ");
+          setFeedback({
+            tone: "success",
+            message: `Logged ${data.expenses.length} item(s): ${refinedSummary}`,
+          });
+        }
+      } catch (error) {
+        setAllSnapshot((prev) => {
+          const rolledBack = rollbackOptimisticExpenseCreate(
+            prev,
+            optimisticIds,
+            optimisticBatchId,
+          );
+          writeCachedSnapshot(userCacheKey, rolledBack);
+          return rolledBack;
+        });
+        setRawInput((prev) => (prev.trim() ? prev : trimmed));
+        setFeedback({
+          tone: "error",
+          message: error instanceof Error ? error.message : "Failed to save expenses.",
+        });
+      } finally {
+        setIsSyncing(false);
+      }
+      return;
+    }
+
+    // Fallback path when no VND amount could be parsed locally on the client
     setIsSaving(true);
     setFeedback(null);
     try {
-      const response = await fetch("/api/expenses", {
+      const response = await fetch("/api/expenses?includeSnapshot=0", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rawInput: trimmed,
-          spentAt: spentAtDate
-            ? new Date(`${spentAtDate}T12:00:00`).toISOString()
-            : undefined,
-          ...(previewItems && previewItems.length > 0
-            ? { items: previewItems, modelUsed: previewModel ?? undefined }
-            : {}),
+          spentAt: spentAtIso,
+          includeSnapshot: false,
         }),
       });
 
       const data = (await response.json()) as {
         expenses?: SerializedExpense[];
+        batch?: SerializedBatch;
         modelUsed?: string;
         snapshot?: DashboardSnapshot;
         error?: string;
       };
 
-      if (!response.ok || !data.snapshot) {
+      if (!response.ok || (!data.expenses && !data.snapshot)) {
         setFeedback({
           tone: "error",
           message: data.error ?? "Failed to save expenses.",
@@ -289,8 +440,13 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
         return;
       }
 
-      setAllSnapshot(data.snapshot);
-      writeCachedSnapshot(userCacheKey, data.snapshot);
+      setAllSnapshot((prev) => {
+        const next = data.snapshot
+          ? data.snapshot
+          : applyOptimisticExpenseCreate(prev, data.expenses ?? [], data.batch);
+        writeCachedSnapshot(userCacheKey, next);
+        return next;
+      });
       setRawInput("");
       setPreviewItems(null);
       setPreviewModel(null);
@@ -339,6 +495,7 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
   }
 
   async function handleQuickTierChange(expenseId: string, nextTier: SpendingTierValue) {
+    if (expenseId.startsWith("optimistic-")) return;
     const previousSnapshot = allSnapshot;
     const optimistic = applyOptimisticExpensePatch(allSnapshot, expenseId, {
       tier: nextTier,
@@ -348,11 +505,14 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     setBusyExpenseId(expenseId);
 
     try {
-      const response = await fetch(`/api/expenses/${encodeURIComponent(expenseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tier: nextTier }),
-      });
+      const response = await fetch(
+        `/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tier: nextTier, includeSnapshot: false }),
+        },
+      );
       const data = (await response.json()) as {
         snapshot?: DashboardSnapshot;
         error?: string;
@@ -373,6 +533,7 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
   }
 
   function startEditing(expense: SerializedExpense) {
+    if (expense.id.startsWith("optimistic-")) return;
     setEditingId(expense.id);
     setEditDraft({
       title: expense.title,
@@ -383,7 +544,7 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
   }
 
   async function saveInlineEdit(expenseId: string) {
-    if (!editDraft) return;
+    if (!editDraft || expenseId.startsWith("optimistic-")) return;
     const draftToSave = editDraft;
     const previousSnapshot = allSnapshot;
     const optimistic = applyOptimisticExpensePatch(allSnapshot, expenseId, draftToSave);
@@ -394,11 +555,14 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     setBusyExpenseId(expenseId);
 
     try {
-      const response = await fetch(`/api/expenses/${encodeURIComponent(expenseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftToSave),
-      });
+      const response = await fetch(
+        `/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...draftToSave, includeSnapshot: false }),
+        },
+      );
       const data = (await response.json()) as {
         snapshot?: DashboardSnapshot;
         error?: string;
@@ -419,6 +583,7 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
   }
 
   async function handleDeleteExpense(expenseId: string) {
+    if (expenseId.startsWith("optimistic-")) return;
     const previousSnapshot = allSnapshot;
     const optimistic = applyOptimisticExpenseDelete(allSnapshot, expenseId);
     setAllSnapshot(optimistic);
@@ -426,9 +591,12 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     setBusyExpenseId(expenseId);
 
     try {
-      const response = await fetch(`/api/expenses/${encodeURIComponent(expenseId)}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`,
+        {
+          method: "DELETE",
+        },
+      );
       const data = (await response.json()) as {
         snapshot?: DashboardSnapshot;
         error?: string;

@@ -131,6 +131,9 @@ const NICE_TO_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; catego
       "ca phe",
       "starbucks",
       "highlands",
+      "phúc long",
+      "phuc long",
+      "katinat",
       "boba",
       "trà sữa",
       "tra sua",
@@ -138,6 +141,8 @@ const NICE_TO_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; catego
       "tea",
       "trà",
       "snack",
+      "ăn vặt",
+      "an vat",
       "dessert",
       "cake",
       "bánh ngọt",
@@ -145,9 +150,26 @@ const NICE_TO_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; catego
       "kem",
       "beer",
       "bia",
+      "wine",
+      "rượu",
+      "nhậu",
       "cocktail",
       "smoothie",
       "sinh tố",
+      "nước ép",
+      "juice",
+      "pizza",
+      "burger",
+      "kfc",
+      "lotteria",
+      "jollibee",
+      "sushi",
+      "ramen",
+      "lẩu",
+      "hotpot",
+      "nướng",
+      "bbq",
+      "buffet",
     ],
     category: "Food & Drink",
     reason: "Beverages, café visits, and snacks are enjoyable lifestyle treats (Nice to have).",
@@ -160,6 +182,8 @@ const NICE_TO_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; catego
       "netflix",
       "spotify",
       "youtube",
+      "icloud",
+      "chatgpt",
       "concert",
       "karaoke",
       "party",
@@ -175,7 +199,20 @@ const NICE_TO_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; catego
     reason: "Personal development and reading are positive discretionary investments (Nice to have).",
   },
   {
-    keywords: ["gym", "yoga", "pilates", "massage", "spa", "skincare", "haircut", "cắt tóc"],
+    keywords: [
+      "gym",
+      "yoga",
+      "pilates",
+      "massage",
+      "spa",
+      "skincare",
+      "haircut",
+      "cắt tóc",
+      "cat toc",
+      "barber",
+      "gội đầu",
+      "nail",
+    ],
     category: "Health",
     reason: "Wellness and self-care improve quality of life (Nice to have).",
   },
@@ -185,15 +222,27 @@ const NICE_TO_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; catego
       "shoes",
       "clothes",
       "quần áo",
+      "quan ao",
       "giày",
       "shopping",
       "shopee",
       "lazada",
+      "tiki",
       "tiktok shop",
+      "uniqlo",
       "gift",
       "quà",
+      "lì xì",
+      "mừng cưới",
       "decor",
       "gadget",
+      "mỹ phẩm",
+      "cosmetics",
+      "perfume",
+      "nước hoa",
+      "charger",
+      "sạc",
+      "tai nghe",
     ],
     category: "Shopping",
     reason: "Discretionary retail and lifestyle shopping (Nice to have).",
@@ -213,16 +262,31 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
       "pho",
       "bún",
       "bun",
+      "mì",
+      "mi",
+      "miến",
+      "cháo",
+      "xôi",
       "bánh mì",
       "banh mi",
+      "bánh cuốn",
       "hủ tiếu",
+      "hu tieu",
       "ăn sáng",
+      "an sang",
       "ăn trưa",
+      "an trua",
       "ăn tối",
+      "an toi",
       "groceries",
       "grocery",
       "siêu thị",
+      "sieu thi",
+      "đi chợ",
       "chợ",
+      "bách hóa xanh",
+      "winmart",
+      "coopmart",
       "thực phẩm",
       "rau",
       "thịt",
@@ -231,6 +295,10 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
       "sữa",
       "rice",
       "water",
+      "nước lọc",
+      "nước suối",
+      "trái cây",
+      "fruit",
     ],
     category: "Food & Drink",
     reason: "Daily meals and groceries are essential living needs (Must have).",
@@ -239,19 +307,39 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
     keywords: [
       "rent",
       "tiền nhà",
+      "tien nha",
       "tiền phòng",
+      "tien phong",
+      "chung cư",
+      "phí quản lý",
       "mortgage",
       "electricity",
       "điện",
+      "tiền điện",
       "water bill",
       "tiền nước",
+      "tien nuoc",
       "internet",
       "wifi",
       "4g",
       "5g",
+      "viettel",
+      "vinaphone",
+      "mobifone",
+      "fpt",
+      "vnpt",
       "phone bill",
+      "nạp điện thoại",
       "gas bill",
+      "bình gas",
       "garbage",
+      "tiền rác",
+      "laundry",
+      "giặt ủi",
+      "shampoo",
+      "dầu gội",
+      "soap",
+      "kem đánh răng",
       "utility",
       "utilities",
       "bill",
@@ -267,15 +355,23 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
       "petrol",
       "xăng",
       "đổ xăng",
+      "do xang",
       "grab",
       "be",
       "xanh sm",
+      "uber",
       "taxi",
       "bus",
       "metro",
       "train",
       "parking",
       "gửi xe",
+      "gui xe",
+      "vé xe",
+      "rửa xe",
+      "vá xe",
+      "thay nhớt",
+      "bảo dưỡng",
       "toll",
       "oil change",
       "sửa xe",
@@ -288,6 +384,8 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
     keywords: [
       "medicine",
       "thuốc",
+      "vitamin",
+      "khẩu trang",
       "pharmacy",
       "hospital",
       "bệnh viện",
@@ -296,6 +394,8 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
       "doctor",
       "dentist",
       "nha khoa",
+      "vaccine",
+      "tiêm chủng",
       "insurance",
       "bảo hiểm",
     ],
@@ -303,7 +403,7 @@ const MUST_HAVE_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category:
     reason: "Medical care and essential health expenses are high-priority necessities (Must have).",
   },
   {
-    keywords: ["tuition", "học phí", "school"],
+    keywords: ["tuition", "học phí", "hoc phi", "school"],
     category: "Education",
     reason: "Core tuition and formal education expenses (Must have).",
   },
@@ -464,4 +564,52 @@ export function isHighConfidenceLocalParse(
       item.title.length <= 50 &&
       item.amountVnd > 0,
   );
+}
+
+/**
+ * Enriches parsed candidates using existing historical expenses (matching by case-insensitive title)
+ * so previously classified or user-adjusted items resolve with high confidence in 0ms.
+ */
+export function enrichCandidatesFromExpenses(
+  candidates: readonly ParsedExpenseCandidate[],
+  historicalExpenses: ReadonlyArray<{
+    readonly title: string;
+    readonly tier: SpendingTierValue;
+    readonly category: string;
+    readonly aiReason: string;
+  }>,
+): ParsedExpenseCandidate[] {
+  if (candidates.length === 0 || historicalExpenses.length === 0) {
+    return [...candidates];
+  }
+
+  const historyByLowerTitle = new Map<
+    string,
+    { tier: SpendingTierValue; category: string; aiReason: string }
+  >();
+
+  for (const row of historicalExpenses) {
+    const key = row.title.trim().toLowerCase();
+    if (key && !historyByLowerTitle.has(key)) {
+      historyByLowerTitle.set(key, {
+        tier: row.tier,
+        category: row.category,
+        aiReason: row.aiReason,
+      });
+    }
+  }
+
+  return candidates.map((candidate) => {
+    const matched = historyByLowerTitle.get(candidate.title.trim().toLowerCase());
+    if (!matched) {
+      return candidate;
+    }
+    return {
+      ...candidate,
+      tier: matched.tier,
+      category: matched.category,
+      aiReason: matched.aiReason,
+      confidence: "high",
+    };
+  });
 }

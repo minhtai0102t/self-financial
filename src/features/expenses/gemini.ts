@@ -12,12 +12,15 @@ import {
 } from "@/features/expenses/parser";
 
 export const DEFAULT_GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
   "gemini-3.7-flash",
-  "gemini-3.6-flash",
   "gemini-3.5-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-3.8-flash",
 ] as const;
+
+export const DEFAULT_GEMINI_TIMEOUT_MS = 3_500;
+export const DEFAULT_MAX_GEMINI_ATTEMPTS = 3;
 
 const geminiItemSchema = z.object({
   title: z.string().min(1),
@@ -46,14 +49,20 @@ export interface GeminiParseOptions {
   readonly forceAi?: boolean;
   /** Optional pre-enriched local candidates (e.g. enriched from user's database history). */
   readonly preEnrichedItems?: readonly ParsedExpenseCandidate[];
+  /** Per-request timeout in milliseconds (defaults to 3,500ms). */
+  readonly timeoutMs?: number;
+  /** Maximum total remote HTTP attempts before falling back to local parsing (defaults to 3). */
+  readonly maxAttempts?: number;
 }
 
 const MAX_PROMPT_CACHE_SIZE = 100;
 const promptParseCache = new Map<string, GeminiParseResult>();
+const unavailableModels = new Set<string>();
 let keyRotationCursor = 0;
 
 export function clearGeminiParseCache(): void {
   promptParseCache.clear();
+  unavailableModels.clear();
 }
 
 function getCacheKey(rawInput: string): string {
@@ -143,6 +152,8 @@ export async function parseExpensesWithGemini(
 
   const models = options?.models ?? DEFAULT_GEMINI_MODELS;
   const fetchFn = options?.fetchImpl ?? fetch;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_GEMINI_TIMEOUT_MS;
+  const maxAttempts = Math.max(1, options?.maxAttempts ?? DEFAULT_MAX_GEMINI_ATTEMPTS);
 
   if (apiKeys.length === 0) {
     return {
@@ -157,30 +168,54 @@ export async function parseExpensesWithGemini(
   const startKeyIndex = keyRotationCursor % apiKeys.length;
   keyRotationCursor = (keyRotationCursor + 1) % apiKeys.length;
 
+  const requestPayload = JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: buildSystemInstruction() }],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: trimmedInput }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: "application/json",
+    },
+  });
+
+  let attempts = 0;
+
   for (const model of models) {
+    if (!options?.models && unavailableModels.has(model)) {
+      continue;
+    }
+
     for (let offset = 0; offset < apiKeys.length; offset++) {
+      if (attempts >= maxAttempts) {
+        break;
+      }
+      attempts++;
+
       const apiKey = apiKeys[(startKeyIndex + offset) % apiKeys.length]!;
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
       try {
         const response = await fetchFn(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: buildSystemInstruction() }],
-            },
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: trimmedInput }],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.1,
-              responseMimeType: "application/json",
-            },
-          }),
+          body: requestPayload,
+          ...(typeof AbortSignal !== "undefined" && "timeout" in AbortSignal && timeoutMs > 0
+            ? { signal: AbortSignal.timeout(timeoutMs) }
+            : {}),
         });
+
+        if (response.status === 404) {
+          // 404 indicates the model endpoint itself does not exist; rotating API keys on the same model is pointless.
+          if (!options?.models) {
+            unavailableModels.add(model);
+          }
+          break;
+        }
 
         if (!response.ok) {
           continue;

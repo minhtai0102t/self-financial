@@ -19,6 +19,7 @@ import {
   parseExpensesWithGemini,
 } from "@/features/expenses/gemini";
 import {
+  enrichCandidatesFromExpenses,
   type ParsedExpenseCandidate,
   parseExpenseTextLocally,
 } from "@/features/expenses/parser";
@@ -153,38 +154,17 @@ async function enrichCandidatesFromHistory(
           title: { equals: t, mode: "insensitive" as const },
         })),
       },
+      select: {
+        title: true,
+        tier: true,
+        category: true,
+        aiReason: true,
+      },
       orderBy: { updatedAt: "desc" },
       take: 50,
     });
 
-    const historyByLowerTitle = new Map<
-      string,
-      { tier: SpendingTierValue; category: string; aiReason: string }
-    >();
-    for (const row of historicalRows) {
-      const key = row.title.trim().toLowerCase();
-      if (!historyByLowerTitle.has(key)) {
-        historyByLowerTitle.set(key, {
-          tier: row.tier,
-          category: row.category,
-          aiReason: row.aiReason,
-        });
-      }
-    }
-
-    return candidates.map((candidate) => {
-      const matched = historyByLowerTitle.get(candidate.title.trim().toLowerCase());
-      if (!matched) {
-        return candidate;
-      }
-      return {
-        ...candidate,
-        tier: matched.tier,
-        category: matched.category,
-        aiReason: matched.aiReason,
-        confidence: "high",
-      };
-    });
+    return enrichCandidatesFromExpenses(candidates, historicalRows);
   } catch {
     return [...candidates];
   }
@@ -220,6 +200,7 @@ export async function parseAndSaveExpenses(
   options?: GeminiParseOptions,
 ): Promise<{
   batchId: string;
+  batch: SerializedBatch;
   modelUsed: string;
   usedFallback: boolean;
   expenses: SerializedExpense[];
@@ -285,11 +266,23 @@ export async function parseAndSaveExpenses(
     },
   });
 
+  const serializedExpenses = createdBatch.expenses.map(serializeExpenseRow);
+  const totalVnd = serializedExpenses.reduce((sum, e) => sum + e.amountVnd, 0);
+
   return {
     batchId: createdBatch.id,
+    batch: {
+      id: createdBatch.id,
+      rawInput: createdBatch.rawInput,
+      aiModel: createdBatch.aiModel,
+      createdAt: createdBatch.createdAt.toISOString(),
+      itemCount: serializedExpenses.length,
+      totalVnd,
+      totalFormatted: formatVnd(totalVnd),
+    },
     modelUsed,
     usedFallback,
-    expenses: createdBatch.expenses.map(serializeExpenseRow),
+    expenses: serializedExpenses,
   };
 }
 

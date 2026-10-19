@@ -166,4 +166,54 @@ describe("parseExpensesWithGemini", () => {
     expect(second.modelUsed).toBe("gemini-3.7-flash (cached)");
     expect(second.items[0]?.tier).toBe("WASTED");
   });
+
+  it("immediately skips remaining API keys for a model that returns 404 Not Found", async () => {
+    const calls: string[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      calls.push(urlStr);
+      if (urlStr.includes("models/non-existent-model:")) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      items: [
+                        {
+                          title: "Custom Item",
+                          amountVnd: 90000,
+                          tier: "NICE_TO_HAVE",
+                          category: "Other",
+                          aiReason: "Classified by valid model.",
+                        },
+                      ],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+
+    const result = await parseExpensesWithGemini("custom unknown item 90k", {
+      apiKeys: ["key-1", "key-2", "key-3"],
+      models: ["non-existent-model", "gemini-2.5-flash"],
+      fetchImpl: mockFetch as unknown as typeof fetch,
+      forceAi: true,
+    });
+
+    // Should only call non-existent-model once (not 3 times across all 3 keys!) before succeeding on gemini-2.5-flash
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("models/non-existent-model:");
+    expect(calls[1]).toContain("models/gemini-2.5-flash:");
+    expect(result.modelUsed).toBe("gemini-2.5-flash");
+  });
 });

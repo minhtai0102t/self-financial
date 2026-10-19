@@ -8,8 +8,17 @@ import {
   getTierLabel,
   type SpendingTierValue,
 } from "@/features/expenses/format";
-import type { ParsedExpenseCandidate } from "@/features/expenses/parser";
-import type { DashboardSnapshot, SerializedExpense } from "@/features/expenses/service";
+import {
+  enrichCandidatesFromExpenses,
+  isHighConfidenceLocalParse,
+  type ParsedExpenseCandidate,
+  parseExpenseTextLocally,
+} from "@/features/expenses/parser";
+import type {
+  DashboardSnapshot,
+  SerializedBatch,
+  SerializedExpense,
+} from "@/features/expenses/service";
 
 const SNAPSHOT_STORAGE_PREFIX = "sf_snapshot_cache_v1";
 const PREVIEW_STORAGE_PREFIX = "sf_parse_preview_v1";
@@ -72,14 +81,158 @@ export function deriveSnapshotForPeriod(
 export function rebuildSnapshotWithExpenses(
   snapshot: DashboardSnapshot,
   expenses: SerializedExpense[],
+  recentBatches: SerializedBatch[] = snapshot.recentBatches,
 ): DashboardSnapshot {
-  const sorted = [...expenses].sort((a, b) => b.spentAt.localeCompare(a.spentAt));
+  const sorted = [...expenses].sort(
+    (a, b) => b.spentAt.localeCompare(a.spentAt) || b.createdAt.localeCompare(a.createdAt),
+  );
   return {
     ...snapshot,
     expenses: sorted,
     analytics: buildExpenseAnalytics(sorted),
     categories: [...new Set(sorted.map((e) => e.category))].sort(),
+    recentBatches,
   };
+}
+
+export function buildOptimisticExpensesFromInput(params: {
+  rawInput: string;
+  spentAtIso: string;
+  previewItems?: readonly ParsedExpenseCandidate[] | null;
+  previewModel?: string | null;
+  existingExpenses?: readonly SerializedExpense[];
+  nowIso?: string;
+  idPrefix?: string;
+}): {
+  batchId: string;
+  candidates: ParsedExpenseCandidate[];
+  optimisticExpenses: SerializedExpense[];
+  isHighConfidence: boolean;
+  modelUsed: string;
+} {
+  const trimmed = params.rawInput.trim();
+  const nowIso = params.nowIso ?? new Date().toISOString();
+  const prefix = params.idPrefix ?? `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const batchId = `optimistic-batch-${prefix}`;
+
+  let candidates: ParsedExpenseCandidate[];
+  let isHighConfidence = false;
+  let modelUsed = "smart-local-rules";
+
+  if (params.previewItems && params.previewItems.length > 0) {
+    candidates = [...params.previewItems];
+    isHighConfidence = true;
+    modelUsed = params.previewModel ?? "manual-preview";
+  } else {
+    const cachedPreview = readCachedParsePreview(trimmed);
+    if (cachedPreview && cachedPreview.items.length > 0) {
+      candidates = [...cachedPreview.items];
+      isHighConfidence = true;
+      modelUsed = cachedPreview.modelUsed;
+    } else {
+      const localParsed = parseExpenseTextLocally(trimmed);
+      candidates = enrichCandidatesFromExpenses(
+        localParsed,
+        params.existingExpenses ?? [],
+      );
+      isHighConfidence = isHighConfidenceLocalParse(trimmed, candidates);
+      modelUsed = isHighConfidence ? "smart-local-rules" : "optimistic-local";
+    }
+  }
+
+  const optimisticExpenses: SerializedExpense[] = candidates.map((item, idx) => ({
+    id: `optimistic-exp-${prefix}-${idx}`,
+    batchId,
+    title: item.title,
+    amountVnd: item.amountVnd,
+    formattedAmount: formatVnd(item.amountVnd),
+    currency: "VND",
+    tier: item.tier,
+    tierLabel: getTierLabel(item.tier),
+    category: item.category,
+    aiReason: item.aiReason,
+    spentAt: params.spentAtIso,
+    createdAt: nowIso,
+  }));
+
+  return {
+    batchId,
+    candidates,
+    optimisticExpenses,
+    isHighConfidence,
+    modelUsed,
+  };
+}
+
+export function applyOptimisticExpenseCreate(
+  snapshot: DashboardSnapshot,
+  newExpenses: readonly SerializedExpense[],
+  batchMeta?: {
+    id: string;
+    rawInput: string;
+    aiModel: string;
+    createdAt?: string;
+  },
+): DashboardSnapshot {
+  if (newExpenses.length === 0) return snapshot;
+
+  const nextExpenses = [...newExpenses, ...snapshot.expenses];
+  let nextBatches = snapshot.recentBatches;
+
+  if (batchMeta) {
+    const totalVnd = newExpenses.reduce((sum, e) => sum + e.amountVnd, 0);
+    const createdBatch: SerializedBatch = {
+      id: batchMeta.id,
+      rawInput: batchMeta.rawInput,
+      aiModel: batchMeta.aiModel,
+      createdAt: batchMeta.createdAt ?? new Date().toISOString(),
+      itemCount: newExpenses.length,
+      totalVnd,
+      totalFormatted: formatVnd(totalVnd),
+    };
+    nextBatches = [
+      createdBatch,
+      ...snapshot.recentBatches.filter((b) => b.id !== batchMeta.id),
+    ].slice(0, 8);
+  }
+
+  return rebuildSnapshotWithExpenses(snapshot, nextExpenses, nextBatches);
+}
+
+export function reconcileOptimisticExpenseCreate(
+  snapshot: DashboardSnapshot,
+  optimisticIds: readonly string[],
+  savedExpenses: readonly SerializedExpense[],
+  savedBatch?: SerializedBatch,
+  optimisticBatchId?: string,
+): DashboardSnapshot {
+  const idSet = new Set(optimisticIds);
+  const withoutOptimistic = snapshot.expenses.filter((item) => !idSet.has(item.id));
+  const nextExpenses = [...savedExpenses, ...withoutOptimistic];
+
+  let nextBatches = snapshot.recentBatches;
+  if (savedBatch) {
+    const filteredBatches = snapshot.recentBatches.filter(
+      (b) => b.id !== optimisticBatchId && b.id !== savedBatch.id,
+    );
+    nextBatches = [savedBatch, ...filteredBatches].slice(0, 8);
+  }
+
+  return rebuildSnapshotWithExpenses(snapshot, nextExpenses, nextBatches);
+}
+
+export function rollbackOptimisticExpenseCreate(
+  snapshot: DashboardSnapshot,
+  optimisticIds: readonly string[],
+  optimisticBatchId?: string,
+): DashboardSnapshot {
+  const idSet = new Set(optimisticIds);
+  const nextExpenses = snapshot.expenses.filter((item) => !idSet.has(item.id));
+  const nextBatches = optimisticBatchId
+    ? snapshot.recentBatches.filter((b) => b.id !== optimisticBatchId)
+    : snapshot.recentBatches;
+
+  return rebuildSnapshotWithExpenses(snapshot, nextExpenses, nextBatches);
 }
 
 export function applyOptimisticExpensePatch(

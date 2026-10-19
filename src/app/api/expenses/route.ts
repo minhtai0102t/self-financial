@@ -43,11 +43,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
     const body = (await request.json()) as Record<string, unknown>;
+    const skipSnapshot =
+      body.includeSnapshot === false || searchParams.get("includeSnapshot") === "0";
+
     const saved = await parseAndSaveExpenses({
       ...(body as Parameters<typeof parseAndSaveExpenses>[0]),
       userId: actor.userId,
     });
+
+    if (skipSnapshot) {
+      return NextResponse.json(saved, { status: 201 });
+    }
+
     const snapshot = await getDashboardSnapshot({ period: "all", userId: actor.userId });
 
     return NextResponse.json(
