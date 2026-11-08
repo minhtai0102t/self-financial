@@ -4,6 +4,7 @@ import {
   SPENDING_TIERS,
   type SpendingTierValue,
   TIER_METADATA,
+  toLocalDateKey,
 } from "@/features/expenses/format";
 
 export type DashboardPeriod =
@@ -15,7 +16,7 @@ export type DashboardPeriod =
   | "year"
   | "all";
 
-export type ReportHorizon = "daily" | "monthly" | "quarterly" | "yearly";
+export type ReportHorizon = "weekly" | "monthly" | "yearly";
 
 export interface AnalyticsExpenseItem {
   readonly id: string;
@@ -89,6 +90,7 @@ export interface ExpenseAnalyticsSnapshot {
   readonly byTier: Record<SpendingTierValue, TierBreakdownItem>;
   readonly byCategory: CategoryBreakdownItem[];
   readonly dailySeries: DailySpendPoint[];
+  readonly weeklySeries: PeriodSummaryBucket[];
   readonly monthlySeries: PeriodSummaryBucket[];
   readonly quarterlySeries: PeriodSummaryBucket[];
   readonly yearlySeries: PeriodSummaryBucket[];
@@ -148,19 +150,61 @@ export function filterExpensesByPeriod<T extends { readonly spentAt: Date | stri
     return [...items];
   }
   const startMs = start.getTime();
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
   return items.filter((item) => {
     const itemDate = item.spentAt instanceof Date ? item.spentAt : new Date(item.spentAt);
     const ms = itemDate.getTime();
-    return Number.isFinite(ms) && ms >= startMs;
+    return Number.isFinite(ms) && ms >= startMs && (period !== "today" || ms < end.getTime());
   });
 }
 
-function toIsoDateKey(value: Date | string): string {
+function toDateKey(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return new Date().toISOString().slice(0, 10);
+    return toLocalDateKey();
   }
-  return date.toISOString().slice(0, 10);
+  return toLocalDateKey(date);
+}
+
+export function getReportPeriodKey(horizon: ReportHorizon, date: Date): string {
+  if (horizon === "yearly") return String(date.getFullYear());
+  if (horizon === "monthly") return toLocalDateKey(date).slice(0, 7);
+  const monday = new Date(date);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  return toLocalDateKey(monday);
+}
+
+export function filterExpensesByReportPeriod<T extends { readonly spentAt: Date | string }>(
+  items: readonly T[],
+  horizon: ReportHorizon,
+  key: string,
+): T[] {
+  return items.filter((item) => {
+    const date = item.spentAt instanceof Date ? item.spentAt : new Date(item.spentAt);
+    return Number.isFinite(date.getTime()) && getReportPeriodKey(horizon, date) === key;
+  });
+}
+
+export function getReportPeriodLabel(horizon: ReportHorizon, key: string): string {
+  if (horizon === "yearly") return key;
+  if (horizon === "monthly") {
+    const [year, month] = key.split("-");
+    return `${MONTH_SHORT_NAMES[Number(month) - 1]} ${year}`;
+  }
+  const start = new Date(`${key}T12:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const startLabel = start.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    ...(start.getFullYear() !== end.getFullYear() ? { year: "numeric" } : {}),
+  });
+  return `${startLabel} - ${end.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  })}`;
 }
 
 function roundPct(part: number, total: number): number {
@@ -258,6 +302,7 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
       count: number;
     }
   >();
+  const weeklyMap = new Map<string, RawPeriodAccumulator>();
   const monthlyMap = new Map<string, RawPeriodAccumulator>();
   const quarterlyMap = new Map<string, RawPeriodAccumulator>();
   const yearlyMap = new Map<string, RawPeriodAccumulator>();
@@ -277,7 +322,7 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
     existingCat.tierAmounts[item.tier] += item.amountVnd;
     categoryMap.set(item.category, existingCat);
 
-    const dateKey = toIsoDateKey(item.spentAt);
+    const dateKey = toDateKey(item.spentAt);
     const existingDay = dailyMap.get(dateKey) ?? {
       totalVnd: 0,
       mustHaveVnd: 0,
@@ -296,6 +341,11 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
     const monthStr = dateKey.slice(5, 7);
     const monthNum = Math.max(1, Math.min(12, Number(monthStr) || 1));
     const quarterNum = Math.floor((monthNum - 1) / 3) + 1;
+
+    const weekKey = getReportPeriodKey("weekly", new Date(`${dateKey}T12:00:00`));
+    addItemToPeriodAccumulator(
+      weeklyMap, weekKey, getReportPeriodLabel("weekly", weekKey), item,
+    );
 
     const monthKey = `${yearStr}-${monthStr}`;
     const monthLabel = `${MONTH_SHORT_NAMES[monthNum - 1]} ${yearStr}`;
@@ -352,6 +402,7 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  const weeklySeries = finalizePeriodSeries(weeklyMap);
   const monthlySeries = finalizePeriodSeries(monthlyMap);
   const quarterlySeries = finalizePeriodSeries(quarterlyMap);
   const yearlySeries = finalizePeriodSeries(yearlyMap);
@@ -427,6 +478,7 @@ export function buildExpenseAnalytics(items: readonly AnalyticsExpenseItem[]): E
     byTier,
     byCategory,
     dailySeries,
+    weeklySeries,
     monthlySeries,
     quarterlySeries,
     yearlySeries,

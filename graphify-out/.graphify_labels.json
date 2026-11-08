@@ -1,0 +1,23 @@
+{
+  "0": "Dashboard and Optimistic Cache",
+  "1": "Authentication and Session Handling",
+  "2": "Expense API and Persistence",
+  "3": "Spending Analytics and Reports",
+  "4": "Gemini and Local Parsing",
+  "5": "Product Features and Setup",
+  "6": "Database Tables and Migrations",
+  "7": "TypeScript Compiler Configuration",
+  "8": "Development Tool Dependencies",
+  "9": "Runtime Library Dependencies",
+  "10": "Build and Database Scripts",
+  "11": "Package Runtime Requirements",
+  "12": "Application Layout and Fonts",
+  "13": "ESLint Configuration",
+  "14": "Prisma Environment Configuration",
+  "15": "Vercel Deployment Configuration",
+  "16": "Crawler Access Policy",
+  "17": "Apple Icon Generation",
+  "18": "Application Icon Generation",
+  "19": "PostCSS Configuration",
+  "20": "Server-Only Test Stub"
+}

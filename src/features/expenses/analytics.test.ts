@@ -17,7 +17,7 @@ describe("buildExpenseAnalytics", () => {
         tier: "NICE_TO_HAVE",
         category: "Food & Drink",
         aiReason: "Morning coffee treat",
-        spentAt: new Date("2026-10-16T08:30:00.000Z"),
+        spentAt: new Date(2026, 9, 16, 8, 30),
       },
       {
         id: "2",
@@ -27,7 +27,7 @@ describe("buildExpenseAnalytics", () => {
         tier: "MUST_HAVE",
         category: "Food & Drink",
         aiReason: "Essential daily meal",
-        spentAt: new Date("2026-10-16T12:15:00.000Z"),
+        spentAt: new Date(2026, 9, 16, 12, 15),
       },
       {
         id: "3",
@@ -37,7 +37,7 @@ describe("buildExpenseAnalytics", () => {
         tier: "WASTED",
         category: "Entertainment",
         aiReason: "Impulse in-game cosmetic",
-        spentAt: new Date("2026-10-15T20:00:00.000Z"),
+        spentAt: new Date(2026, 9, 15, 20),
       },
     ]);
 
@@ -212,5 +212,44 @@ describe("buildExpenseAnalytics", () => {
       "prev-quarter",
     ]);
     expect(filterExpensesByPeriod(items, "all", now)).toHaveLength(4);
+  });
+
+  it("shows only the selected local calendar day, including backdated entries", () => {
+    const selectedDay = new Date(2026, 10, 7, 12);
+    const items = [
+      { id: "before", spentAt: new Date(2026, 10, 6, 23, 59, 59) },
+      { id: "start", spentAt: new Date(2026, 10, 7, 0) },
+      { id: "end", spentAt: new Date(2026, 10, 7, 23, 59, 59) },
+      { id: "after", spentAt: new Date(2026, 10, 8, 0) },
+      { id: "invalid", spentAt: "not-a-date" },
+    ];
+
+    expect(filterExpensesByPeriod(items, "today", selectedDay).map((item) => item.id))
+      .toEqual(["start", "end"]);
+  });
+
+  it("groups Monday through Sunday into one week across the year boundary", () => {
+    const items = [
+      { id: "sunday", spentAt: new Date(2025, 11, 28, 12), amountVnd: 10_000 },
+      { id: "monday", spentAt: new Date(2025, 11, 29, 0), amountVnd: 20_000 },
+      { id: "new-year", spentAt: new Date(2026, 0, 1, 0), amountVnd: 30_000 },
+      { id: "last-day", spentAt: new Date(2026, 0, 4, 23, 59), amountVnd: 40_000 },
+      { id: "next-week", spentAt: new Date(2026, 0, 5, 0), amountVnd: 50_000 },
+    ].map((item) => ({
+      ...item,
+      title: "Meal",
+      currency: "VND",
+      tier: "MUST_HAVE" as const,
+      category: "Food & Drink",
+      aiReason: "Meal",
+    }));
+
+    expect(buildExpenseAnalytics(items)).toMatchObject({
+      weeklySeries: [
+        { key: "2025-12-22", totalVnd: 10_000, count: 1 },
+        { key: "2025-12-29", totalVnd: 90_000, count: 3, mustHaveVnd: 90_000 },
+        { key: "2026-01-05", totalVnd: 50_000, count: 1 },
+      ],
+    });
   });
 });

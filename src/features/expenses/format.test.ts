@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { formatVnd, getTierLabel, normalizeSpendingTier } from "@/features/expenses/format";
+import {
+  formatVnd,
+  getTierLabel,
+  normalizeSpendingTier,
+  shiftDateKey,
+  toLocalDateKey,
+} from "@/features/expenses/format";
+
+describe("expense date selection", () => {
+  it("uses the local calendar date rather than the UTC date", () => {
+    expect(toLocalDateKey(new Date(2026, 10, 8, 0, 30))).toBe("2026-11-08");
+  });
+
+  it("moves between days across month and year boundaries", () => {
+    expect(shiftDateKey("2026-01-01", -1)).toBe("2025-12-31");
+    expect(shiftDateKey("2026-02-28", 1)).toBe("2026-03-01");
+    expect(shiftDateKey("2024-02-28", 1)).toBe("2024-02-29");
+  });
+});
 
 describe("formatVnd", () => {
   it("formats VND integers with dot thousands separators and VND suffix", () => {

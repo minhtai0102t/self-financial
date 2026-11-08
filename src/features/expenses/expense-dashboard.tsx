@@ -1,29 +1,30 @@
 "use client";
 
+import { gsap } from "gsap";
 import {
   AlertTriangle,
-  BarChart3,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Edit3,
-  Eye,
-  Filter,
-  LayoutGrid,
   LogOut,
-  PlusCircle,
-  ReceiptText,
+  MoreHorizontal,
   RefreshCw,
-  Search,
-  Share,
   Smartphone,
   Trash2,
-  Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { signOut } from "@/features/auth/actions";
-import type { DashboardPeriod } from "@/features/expenses/analytics";
 import {
   applyOptimisticExpenseCreate,
   applyOptimisticExpenseDelete,
@@ -41,8 +42,10 @@ import {
   EXPENSE_CATEGORIES,
   formatVnd,
   getTierLabel,
+  shiftDateKey,
   SPENDING_TIERS,
   type SpendingTierValue,
+  toLocalDateKey,
 } from "@/features/expenses/format";
 import type { ParsedExpenseCandidate } from "@/features/expenses/parser";
 import {
@@ -66,42 +69,44 @@ interface ExpenseDashboardProps {
   };
 }
 
-type ViewTab = "log" | "insights" | "ledger" | "all";
+type ViewTab = "log" | "reports";
 
-const PERIOD_OPTIONS: ReadonlyArray<{ value: DashboardPeriod; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "year", label: "Year" },
-  { value: "quarter", label: "Quarter" },
-  { value: "month", label: "Month" },
-  { value: "30d", label: "30D" },
-  { value: "7d", label: "7D" },
-  { value: "today", label: "Today" },
-];
-
-function getTierBadgeClasses(tier: SpendingTierValue): string {
-  switch (tier) {
-    case "MUST_HAVE":
-      return "bg-emerald-50 text-emerald-800 border-emerald-200/90";
-    case "NICE_TO_HAVE":
-      return "bg-amber-50 text-amber-800 border-amber-200/90";
-    case "WASTED":
-      return "bg-rose-50 text-rose-800 border-rose-200/90";
+function subscribeLocalDate(callback: () => void): () => void {
+  let timer: number;
+  function scheduleMidnight() {
+    window.clearTimeout(timer);
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    timer = window.setTimeout(update, midnight.getTime() - now.getTime());
   }
+  function update() {
+    callback();
+    scheduleMidnight();
+  }
+  scheduleMidnight();
+  window.addEventListener("focus", update);
+  return () => {
+    window.clearTimeout(timer);
+    window.removeEventListener("focus", update);
+  };
+}
+
+function getLocalDateSnapshot(): string {
+  return toLocalDateKey();
+}
+
+function getLocalDateServerSnapshot(): string {
+  return "";
 }
 
 function subscribeStandaloneMode(callback: () => void): () => void {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
   const mq = window.matchMedia("(display-mode: standalone)");
   mq.addEventListener("change", callback);
   return () => mq.removeEventListener("change", callback);
 }
 
 function getStandaloneModeSnapshot(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
   const standaloneMq = window.matchMedia("(display-mode: standalone)").matches;
   const iosStandalone = Boolean(
     (window.navigator as Navigator & { standalone?: boolean }).standalone,
@@ -115,49 +120,20 @@ function getStandaloneModeServerSnapshot(): boolean {
 
 export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProps) {
   const userCacheKey = user?.email ?? "default-user";
-
-  // Master "all" snapshot stored in client memory + localStorage for 0ms period switching
   const [allSnapshot, setAllSnapshot] = useState<DashboardSnapshot>(initialSnapshot);
-  const [period, setPeriod] = useState<DashboardPeriod>(initialSnapshot.period);
-  const [activeTab, setActiveTab] = useState<ViewTab>("all");
+  const [activeTab, setActiveTab] = useState<ViewTab>("log");
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showIosGuide, setShowIosGuide] = useState(false);
-  const [showQuickChips, setShowQuickChips] = useState(false);
-
-  const isStandalone = useSyncExternalStore(
-    subscribeStandaloneMode,
-    getStandaloneModeSnapshot,
-    getStandaloneModeServerSnapshot,
-  );
-
-  // Persist initial server snapshot into client SWR cache
-  useEffect(() => {
-    writeCachedSnapshot(userCacheKey, initialSnapshot);
-  }, [userCacheKey, initialSnapshot]);
-
-  // Derive the active period snapshot synchronously in 0ms from cached master data
-  const snapshot = useMemo(
-    () => deriveSnapshotForPeriod(allSnapshot, period),
-    [allSnapshot, period],
-  );
-
-  // Input & AI parsing state
   const [rawInput, setRawInput] = useState("");
-  const [spentAtDate, setSpentAtDate] = useState(() =>
-    new Date().toISOString().slice(0, 10),
-  );
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [previewItems, setPreviewItems] = useState<ParsedExpenseCandidate[] | null>(
-    null,
-  );
+  const [previewItems, setPreviewItems] = useState<ParsedExpenseCandidate[] | null>(null);
   const [previewModel, setPreviewModel] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
-
-  // Ledger filtering & editing state
   const [tierFilter, setTierFilter] = useState<SpendingTierValue | "ALL">("ALL");
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
@@ -169,6 +145,68 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     tier: SpendingTierValue;
   } | null>(null);
   const [busyExpenseId, setBusyExpenseId] = useState<string | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const previousExpenseIds = useRef(new Set<string>());
+
+  const today = useSyncExternalStore(
+    subscribeLocalDate,
+    getLocalDateSnapshot,
+    getLocalDateServerSnapshot,
+  );
+  const spentAtDate = selectedDate ?? today;
+  const isStandalone = useSyncExternalStore(
+    subscribeStandaloneMode,
+    getStandaloneModeSnapshot,
+    getStandaloneModeServerSnapshot,
+  );
+
+  useEffect(() => {
+    writeCachedSnapshot(userCacheKey, initialSnapshot);
+  }, [userCacheKey, initialSnapshot]);
+
+  const snapshot = useMemo(
+    () => deriveSnapshotForPeriod(
+      allSnapshot, "today", new Date(`${spentAtDate}T12:00:00`),
+    ),
+    [allSnapshot, spentAtDate],
+  );
+  const { analytics } = snapshot;
+
+  const filteredExpenses = useMemo(() => snapshot.expenses.filter((item) => {
+    if (tierFilter !== "ALL" && item.tier !== tierFilter) return false;
+    if (categoryFilter !== "ALL" && item.category !== categoryFilter) return false;
+    const query = searchQuery.trim().toLowerCase();
+    return !query || [item.title, item.category, item.aiReason]
+      .some((value) => value.toLowerCase().includes(query));
+  }), [snapshot.expenses, tierFilter, categoryFilter, searchQuery]);
+
+  useLayoutEffect(() => {
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.fromTo(mainRef.current, { opacity: 0, y: 6 }, {
+        opacity: 1, y: 0, duration: 0.2, ease: "power2.out",
+        clearProps: "opacity,transform",
+      });
+    });
+    return () => media.revert();
+  }, [activeTab, spentAtDate]);
+
+  useLayoutEffect(() => {
+    const previous = previousExpenseIds.current;
+    previousExpenseIds.current = new Set(filteredExpenses.map((item) => item.id));
+    if (filteredExpenses.length <= previous.size || activeTab !== "log") return;
+    const rows = [...(mainRef.current?.querySelectorAll<HTMLElement>("[data-expense-id]") ?? [])]
+      .filter((row) => !previous.has(row.dataset.expenseId ?? ""));
+    if (rows.length === 0) return;
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.fromTo(rows, { opacity: 0, y: 4 }, {
+        opacity: 1, y: 0, duration: 0.16, stagger: { amount: 0.06 },
+        ease: "power2.out", clearProps: "opacity,transform",
+      });
+    });
+    return () => media.revert();
+  }, [filteredExpenses, activeTab]);
 
   async function revalidateFromServer() {
     setIsSyncing(true);
@@ -180,34 +218,36 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
         writeCachedSnapshot(userCacheKey, data);
       }
     } catch {
-      // Keep cached client state if offline
+      // Keep cached client state if offline.
     } finally {
       setIsSyncing(false);
     }
   }
 
-  function handlePeriodChange(nextPeriod: DashboardPeriod) {
-    // 1. Instant 0ms UI update from client-side derived cache
-    setPeriod(nextPeriod);
-
-    // 2. If cached master snapshot is stale, revalidate quietly in background
+  function revalidateIfStale() {
+    if (isSyncing || busyExpenseId) return;
     const cached = readCachedSnapshot(userCacheKey, "all");
-    if (!cached || cached.isStale) {
-      void revalidateFromServer();
-    }
+    if (!cached || cached.isStale) void revalidateFromServer();
+  }
+
+  function changeDate(date: string | null) {
+    setSelectedDate(date);
+    setTierFilter("ALL");
+    setCategoryFilter("ALL");
+    setSearchQuery("");
+    setEditingId(null);
+    setEditDraft(null);
+    setFeedback(null);
+    revalidateIfStale();
   }
 
   async function handlePreviewParse() {
     const trimmed = rawInput.trim();
     if (!trimmed) {
-      setFeedback({
-        tone: "error",
-        message: 'Enter spending text first, e.g. "coffee 30k, lunch 50k".',
-      });
+      setFeedback({ tone: "error", message: "Enter an expense first." });
       return;
     }
 
-    // Check client-side parse preview cache first for instant 0ms response
     const cachedPreview = readCachedParsePreview(trimmed);
     if (cachedPreview) {
       setPreviewItems(cachedPreview.items);
@@ -215,10 +255,9 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
       return;
     }
 
-    // Instant 0ms local + historical enrichment preview when high-confidence
     const localPlan = buildOptimisticExpensesFromInput({
       rawInput: trimmed,
-      spentAtIso: new Date().toISOString(),
+      spentAtIso: new Date(`${selectedDate ?? toLocalDateKey()}T12:00:00`).toISOString(),
       existingExpenses: allSnapshot.expenses,
     });
     if (localPlan.isHighConfidence && localPlan.candidates.length > 0) {
@@ -244,15 +283,10 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
         modelUsed?: string;
         error?: string;
       };
-
       if (!response.ok || !data.items) {
-        setFeedback({
-          tone: "error",
-          message: data.error ?? "Failed to parse expenses.",
-        });
+        setFeedback({ tone: "error", message: data.error ?? "Failed to parse expenses." });
         return;
       }
-
       const modelUsed = data.modelUsed ?? "gemini";
       setPreviewItems(data.items);
       setPreviewModel(modelUsed);
@@ -267,21 +301,11 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     }
   }
 
-  async function handleDirectParseAndSave(e?: React.FormEvent) {
-    e?.preventDefault();
+  async function handleDirectParseAndSave(event?: React.FormEvent) {
+    event?.preventDefault();
     const trimmed = rawInput.trim();
-    if (!trimmed) {
-      setFeedback({
-        tone: "error",
-        message: 'Enter spending text first, e.g. "coffee 30k, lunch 50k".',
-      });
-      return;
-    }
-
-    const spentAtIso = spentAtDate
-      ? new Date(`${spentAtDate}T12:00:00`).toISOString()
-      : new Date().toISOString();
-
+    if (!trimmed || !spentAtDate) return;
+    const spentAtIso = new Date(`${selectedDate ?? toLocalDateKey()}T12:00:00`).toISOString();
     const optimisticPlan = buildOptimisticExpensesFromInput({
       rawInput: trimmed,
       spentAtIso,
@@ -290,38 +314,26 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
       existingExpenses: allSnapshot.expenses,
     });
 
-    // Fast path: 0ms optimistic UI insertion + non-blocking background persistence
     if (optimisticPlan.optimisticExpenses.length > 0) {
       const optimisticIds = optimisticPlan.optimisticExpenses.map((item) => item.id);
       const optimisticBatchId = optimisticPlan.batchId;
 
       setAllSnapshot((prev) => {
-        const next = applyOptimisticExpenseCreate(
-          prev,
-          optimisticPlan.optimisticExpenses,
-          {
-            id: optimisticBatchId,
-            rawInput: trimmed,
-            aiModel: optimisticPlan.modelUsed,
-          },
-        );
+        const next = applyOptimisticExpenseCreate(prev, optimisticPlan.optimisticExpenses, {
+          id: optimisticBatchId,
+          rawInput: trimmed,
+          aiModel: optimisticPlan.modelUsed,
+        });
         writeCachedSnapshot(userCacheKey, next);
         return next;
       });
-
       setRawInput("");
       setPreviewItems(null);
       setPreviewModel(null);
-
-      const initialSummary = optimisticPlan.optimisticExpenses
-        .map((item) => `${item.title}: ${item.formattedAmount} (${item.tierLabel})`)
-        .join(" · ");
-
       setFeedback({
         tone: "success",
-        message: `Logged ${optimisticPlan.optimisticExpenses.length} item(s): ${initialSummary}`,
+        message: `Logged ${optimisticPlan.optimisticExpenses.length} expense(s).`,
       });
-
       setIsSyncing(true);
       try {
         const response = await fetch("/api/expenses?includeSnapshot=0", {
@@ -331,15 +343,12 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
             rawInput: trimmed,
             spentAt: spentAtIso,
             includeSnapshot: false,
-            ...(optimisticPlan.isHighConfidence
-              ? {
-                  items: optimisticPlan.candidates,
-                  modelUsed: optimisticPlan.modelUsed,
-                }
-              : {}),
+            ...(optimisticPlan.isHighConfidence ? {
+              items: optimisticPlan.candidates,
+              modelUsed: optimisticPlan.modelUsed,
+            } : {}),
           }),
         });
-
         const data = (await response.json()) as {
           expenses?: SerializedExpense[];
           batch?: SerializedBatch;
@@ -347,59 +356,33 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
           snapshot?: DashboardSnapshot;
           error?: string;
         };
-
         if (!response.ok || (!data.expenses && !data.snapshot)) {
           setAllSnapshot((prev) => {
-            const rolledBack = rollbackOptimisticExpenseCreate(
-              prev,
-              optimisticIds,
-              optimisticBatchId,
-            );
+            const rolledBack = rollbackOptimisticExpenseCreate(prev, optimisticIds, optimisticBatchId);
             writeCachedSnapshot(userCacheKey, rolledBack);
             return rolledBack;
           });
-          setRawInput((prev) => (prev.trim() ? prev : trimmed));
-          setFeedback({
-            tone: "error",
-            message: data.error ?? "Failed to save expenses.",
-          });
+          setRawInput((prev) => prev.trim() ? prev : trimmed);
+          setFeedback({ tone: "error", message: data.error ?? "Failed to save expenses." });
           return;
         }
-
         setAllSnapshot((prev) => {
-          const reconciled = data.snapshot
-            ? data.snapshot
-            : reconcileOptimisticExpenseCreate(
-                prev,
-                optimisticIds,
-                data.expenses ?? [],
-                data.batch,
-                optimisticBatchId,
-              );
+          const reconciled = data.snapshot ?? reconcileOptimisticExpenseCreate(
+            prev, optimisticIds, data.expenses ?? [], data.batch, optimisticBatchId,
+          );
           writeCachedSnapshot(userCacheKey, reconciled);
           return reconciled;
         });
-
-        if (data.expenses && data.expenses.length > 0 && !optimisticPlan.isHighConfidence) {
-          const refinedSummary = data.expenses
-            .map((item) => `${item.title}: ${item.formattedAmount} (${item.tierLabel})`)
-            .join(" · ");
-          setFeedback({
-            tone: "success",
-            message: `Logged ${data.expenses.length} item(s): ${refinedSummary}`,
-          });
+        if (data.expenses?.length && !optimisticPlan.isHighConfidence) {
+          setFeedback({ tone: "success", message: `Logged ${data.expenses.length} expense(s).` });
         }
       } catch (error) {
         setAllSnapshot((prev) => {
-          const rolledBack = rollbackOptimisticExpenseCreate(
-            prev,
-            optimisticIds,
-            optimisticBatchId,
-          );
+          const rolledBack = rollbackOptimisticExpenseCreate(prev, optimisticIds, optimisticBatchId);
           writeCachedSnapshot(userCacheKey, rolledBack);
           return rolledBack;
         });
-        setRawInput((prev) => (prev.trim() ? prev : trimmed));
+        setRawInput((prev) => prev.trim() ? prev : trimmed);
         setFeedback({
           tone: "error",
           message: error instanceof Error ? error.message : "Failed to save expenses.",
@@ -410,20 +393,14 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
       return;
     }
 
-    // Fallback path when no VND amount could be parsed locally on the client
     setIsSaving(true);
     setFeedback(null);
     try {
       const response = await fetch("/api/expenses?includeSnapshot=0", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rawInput: trimmed,
-          spentAt: spentAtIso,
-          includeSnapshot: false,
-        }),
+        body: JSON.stringify({ rawInput: trimmed, spentAt: spentAtIso, includeSnapshot: false }),
       });
-
       const data = (await response.json()) as {
         expenses?: SerializedExpense[];
         batch?: SerializedBatch;
@@ -431,34 +408,19 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
         snapshot?: DashboardSnapshot;
         error?: string;
       };
-
       if (!response.ok || (!data.expenses && !data.snapshot)) {
-        setFeedback({
-          tone: "error",
-          message: data.error ?? "Failed to save expenses.",
-        });
+        setFeedback({ tone: "error", message: data.error ?? "Failed to save expenses." });
         return;
       }
-
       setAllSnapshot((prev) => {
-        const next = data.snapshot
-          ? data.snapshot
-          : applyOptimisticExpenseCreate(prev, data.expenses ?? [], data.batch);
+        const next = data.snapshot ?? applyOptimisticExpenseCreate(prev, data.expenses ?? [], data.batch);
         writeCachedSnapshot(userCacheKey, next);
         return next;
       });
       setRawInput("");
       setPreviewItems(null);
       setPreviewModel(null);
-
-      const summaryList = (data.expenses ?? [])
-        .map((item) => `${item.title}: ${item.formattedAmount} (${item.tierLabel})`)
-        .join(" · ");
-
-      setFeedback({
-        tone: "success",
-        message: `Logged ${data.expenses?.length ?? 0} item(s): ${summaryList}`,
-      });
+      setFeedback({ tone: "success", message: `Logged ${data.expenses?.length ?? 0} expense(s).` });
     } catch (error) {
       setFeedback({
         tone: "error",
@@ -469,23 +431,13 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     }
   }
 
-  function updatePreviewCandidate(
-    index: number,
-    patch: Partial<ParsedExpenseCandidate>,
-  ) {
+  function updatePreviewCandidate(index: number, patch: Partial<ParsedExpenseCandidate>) {
     if (!previewItems) return;
-    const next = previewItems.map((item, idx) => {
+    setPreviewItems(previewItems.map((item, idx) => {
       if (idx !== index) return item;
-      const updatedAmount =
-        patch.amountVnd !== undefined ? patch.amountVnd : item.amountVnd;
-      return {
-        ...item,
-        ...patch,
-        amountVnd: updatedAmount,
-        formattedAmount: formatVnd(updatedAmount),
-      };
-    });
-    setPreviewItems(next);
+      const amountVnd = patch.amountVnd ?? item.amountVnd;
+      return { ...item, ...patch, amountVnd, formattedAmount: formatVnd(amountVnd) };
+    }));
   }
 
   function removePreviewCandidate(index: number) {
@@ -497,26 +449,17 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
   async function handleQuickTierChange(expenseId: string, nextTier: SpendingTierValue) {
     if (expenseId.startsWith("optimistic-")) return;
     const previousSnapshot = allSnapshot;
-    const optimistic = applyOptimisticExpensePatch(allSnapshot, expenseId, {
-      tier: nextTier,
-    });
+    const optimistic = applyOptimisticExpensePatch(allSnapshot, expenseId, { tier: nextTier });
     setAllSnapshot(optimistic);
     writeCachedSnapshot(userCacheKey, optimistic);
     setBusyExpenseId(expenseId);
-
     try {
-      const response = await fetch(
-        `/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tier: nextTier, includeSnapshot: false }),
-        },
-      );
-      const data = (await response.json()) as {
-        snapshot?: DashboardSnapshot;
-        error?: string;
-      };
+      const response = await fetch(`/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier: nextTier, includeSnapshot: false }),
+      });
+      const data = (await response.json()) as { snapshot?: DashboardSnapshot; error?: string };
       if (response.ok && data.snapshot) {
         setAllSnapshot(data.snapshot);
         writeCachedSnapshot(userCacheKey, data.snapshot);
@@ -553,20 +496,13 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     setEditingId(null);
     setEditDraft(null);
     setBusyExpenseId(expenseId);
-
     try {
-      const response = await fetch(
-        `/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...draftToSave, includeSnapshot: false }),
-        },
-      );
-      const data = (await response.json()) as {
-        snapshot?: DashboardSnapshot;
-        error?: string;
-      };
+      const response = await fetch(`/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...draftToSave, includeSnapshot: false }),
+      });
+      const data = (await response.json()) as { snapshot?: DashboardSnapshot; error?: string };
       if (response.ok && data.snapshot) {
         setAllSnapshot(data.snapshot);
         writeCachedSnapshot(userCacheKey, data.snapshot);
@@ -589,18 +525,11 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     setAllSnapshot(optimistic);
     writeCachedSnapshot(userCacheKey, optimistic);
     setBusyExpenseId(expenseId);
-
     try {
-      const response = await fetch(
-        `/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`,
-        {
-          method: "DELETE",
-        },
-      );
-      const data = (await response.json()) as {
-        snapshot?: DashboardSnapshot;
-        error?: string;
-      };
+      const response = await fetch(`/api/expenses/${encodeURIComponent(expenseId)}?includeSnapshot=0`, {
+        method: "DELETE",
+      });
+      const data = (await response.json()) as { snapshot?: DashboardSnapshot; error?: string };
       if (response.ok && data.snapshot) {
         setAllSnapshot(data.snapshot);
         writeCachedSnapshot(userCacheKey, data.snapshot);
@@ -616,1060 +545,358 @@ export function ExpenseDashboard({ initialSnapshot, user }: ExpenseDashboardProp
     }
   }
 
-  const filteredExpenses = useMemo(() => {
-    return snapshot.expenses.filter((item) => {
-      if (tierFilter !== "ALL" && item.tier !== tierFilter) return false;
-      if (categoryFilter !== "ALL" && item.category !== categoryFilter) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesTitle = item.title.toLowerCase().includes(q);
-        const matchesCategory = item.category.toLowerCase().includes(q);
-        const matchesReason = item.aiReason.toLowerCase().includes(q);
-        if (!matchesTitle && !matchesCategory && !matchesReason) return false;
-      }
-      return true;
-    });
-  }, [snapshot.expenses, tierFilter, categoryFilter, searchQuery]);
-
   function handleExportCsv() {
-    const headers = [
-      "Date",
-      "Title",
-      "Amount (VND)",
-      "Formatted Amount",
-      "Value Tier",
-      "Category",
-      "AI Reason",
-    ];
-    const rows = filteredExpenses.map((e) => [
-      e.spentAt.slice(0, 10),
-      `"${e.title.replace(/"/g, '""')}"`,
-      String(e.amountVnd),
-      `"${e.formattedAmount}"`,
-      `"${e.tierLabel}"`,
-      `"${e.category}"`,
-      `"${e.aiReason.replace(/"/g, '""')}"`,
+    const headers = ["Date", "Title", "Amount (VND)", "Formatted Amount", "Value Tier", "Category", "AI Reason"];
+    const expenses = activeTab === "reports" ? allSnapshot.expenses : filteredExpenses;
+    const rows = expenses.map((expense) => [
+      toLocalDateKey(new Date(expense.spentAt)),
+      `"${expense.title.replace(/"/g, '""')}"`,
+      String(expense.amountVnd),
+      `"${expense.formattedAmount}"`,
+      `"${expense.tierLabel}"`,
+      `"${expense.category}"`,
+      `"${expense.aiReason.replace(/"/g, '""')}"`,
     ]);
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
+    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `self-financial-expenses-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `self-financial-expenses-${today}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }
 
-  const { analytics } = snapshot;
-
-  const showLogSection = activeTab === "log" || activeTab === "all";
-  const showInsightsSection = activeTab === "insights" || activeTab === "all";
-  const showLedgerSection = activeTab === "ledger" || activeTab === "all";
+  const dateLabel = spentAtDate && spentAtDate !== today
+    ? new Date(`${spentAtDate}T12:00:00`).toLocaleDateString("en-GB", {
+      weekday: "short", day: "numeric", month: "short", year: "numeric",
+    })
+    : "Today";
+  const controlClass = "min-h-11 rounded-lg border border-zinc-200 bg-white px-3 text-sm";
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900 pb-20 md:pb-12">
-      {/* Minimalist Sticky Top Bar */}
-      <header className="sticky top-0 z-20 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md pt-safe">
-        <div className="mx-auto max-w-6xl px-4 py-2.5 sm:px-6 flex flex-col gap-2.5">
-          {/* Top Row: Brand + View Navigation + Actions */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white">
-                <Wallet className="h-4 w-4" />
-              </div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm sm:text-base font-semibold tracking-tight text-zinc-900">
-                  Self Financial
-                </h1>
-                <button
-                  type="button"
-                  onClick={() => void revalidateFromServer()}
-                  title="Client cache active — click to sync with server"
-                  className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 hover:text-zinc-900"
-                >
-                  <RefreshCw className={`h-2.5 w-2.5 ${isSyncing ? "animate-spin" : ""}`} />
-                  <span>{isSyncing ? "Syncing" : "Cached"}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Desktop Primary View Tabs */}
-            <div
-              role="tablist"
-              aria-label="Workspace view"
-              className="hidden md:inline-flex rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 text-xs"
+    <div className="min-h-screen bg-white text-zinc-900 pb-safe">
+      <header className="border-b border-zinc-100 pt-safe">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
+          <h1 className="text-sm font-semibold tracking-tight">Self Financial</h1>
+          <nav aria-label="Workspace view" className="flex items-center gap-5 text-sm">
+            {(["log", "reports"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                aria-current={activeTab === tab ? "page" : undefined}
+                onClick={() => { setActiveTab(tab); revalidateIfStale(); }}
+                className={`min-h-11 border-b-2 transition-colors ${
+                  activeTab === tab ? "border-zinc-900 font-medium" : "border-transparent text-zinc-400 hover:text-zinc-700"
+                }`}
+              >
+                {tab === "log" ? "Log" : "Reports"}
+              </button>
+            ))}
+          </nav>
+          <details className="relative">
+            <summary
+              aria-label="Workspace options"
+              className="flex h-11 w-8 cursor-pointer list-none items-center justify-center text-zinc-400 hover:text-zinc-900 [&::-webkit-details-marker]:hidden"
             >
-              {(
-                [
-                  { id: "all", label: "Overview" },
-                  { id: "insights", label: "Reports & Analyze" },
-                  { id: "ledger", label: `Ledger (${snapshot.expenses.length})` },
-                  { id: "log", label: "Quick Log" },
-                ] as const
-              ).map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`rounded-md px-3 py-1 font-medium transition ${
-                    activeTab === tab.id
-                      ? "bg-white text-zinc-900 shadow-2xs"
-                      : "text-zinc-500 hover:text-zinc-900"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Utility Actions */}
-            <div className="flex items-center gap-1.5">
+              <MoreHorizontal className="h-5 w-5" />
+            </summary>
+            <div className="absolute right-0 top-12 z-20 w-52 rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
+              <button type="button" onClick={() => void revalidateFromServer()} disabled={isSyncing}
+                className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-zinc-50">
+                <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin motion-reduce:animate-none" : ""}`} />
+                {isSyncing ? "Syncing..." : "Refresh"}
+              </button>
+              <button type="button" onClick={handleExportCsv}
+                disabled={(activeTab === "reports" ? allSnapshot.expenses : filteredExpenses).length === 0}
+                className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-zinc-50 disabled:opacity-40">
+                <Download className="h-4 w-4" /> {activeTab === "reports" ? "Export all expenses" : "Export this day"}
+              </button>
               {!isStandalone && (
-                <button
-                  type="button"
-                  onClick={() => setShowIosGuide(true)}
-                  className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                  aria-label="iPhone Home Screen app guide"
-                >
-                  <Smartphone className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">iOS App</span>
+                <button type="button" onClick={() => setShowIosGuide(true)}
+                  className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-zinc-50">
+                  <Smartphone className="h-4 w-4" /> Add to Home Screen
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleExportCsv}
-                disabled={filteredExpenses.length === 0}
-                className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
-                aria-label="Export CSV"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">CSV</span>
-              </button>
               {user && (
                 <form action={signOut}>
-                  <button
-                    type="submit"
-                    className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                    aria-label={`Sign out (${user.name})`}
-                    title={`Signed in as ${user.name} (${user.email})`}
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">{user.name.split(" ")[0]}</span>
+                  <button type="submit" aria-label={`Sign out (${user.name})`}
+                    className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-zinc-50">
+                    <LogOut className="h-4 w-4" /> Sign out
                   </button>
                 </form>
               )}
             </div>
-          </div>
-
-          {/* Second Row: Period Filter Strip (All, Year, Quarter, Month, 30D, 7D, Today) */}
-          <div className="flex items-center justify-between gap-2 overflow-x-auto">
-            <div
-              className="inline-flex w-full sm:w-auto rounded-lg border border-zinc-200/80 bg-zinc-100/80 p-0.5"
-              role="group"
-              aria-label="Reporting period"
-            >
-              {PERIOD_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => handlePeriodChange(opt.value)}
-                  className={`flex-1 sm:flex-initial whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                    period === opt.value
-                      ? "bg-white text-zinc-900 shadow-2xs"
-                      : "text-zinc-500 hover:text-zinc-900"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          </details>
         </div>
       </header>
 
-      {/* iOS Safari "Add to Home Screen" Guide Modal */}
-      {showIosGuide && (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-zinc-900/40 p-4 backdrop-blur-xs"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="ios-guide-title"
-        >
-          <div className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-5 shadow-lg space-y-4 mb-safe">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 id="ios-guide-title" className="text-sm font-semibold text-zinc-900">
-                  Add to iPhone Home Screen
-                </h2>
-                <p className="text-xs text-zinc-500">
-                  Install as a standalone full-screen web app
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowIosGuide(false)}
-                className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                aria-label="Close guide"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <ol className="space-y-2 text-xs text-zinc-600">
-              <li className="flex items-start gap-2 rounded-lg bg-zinc-50 p-2.5">
-                <span className="font-mono font-semibold text-zinc-900">1.</span>
-                <div>
-                  Tap{" "}
-                  <span className="inline-flex items-center gap-0.5 font-medium text-zinc-900">
-                    <Share className="h-3 w-3" /> Share
-                  </span>{" "}
-                  in Safari.
-                </div>
-              </li>
-              <li className="flex items-start gap-2 rounded-lg bg-zinc-50 p-2.5">
-                <span className="font-mono font-semibold text-zinc-900">2.</span>
-                <div>
-                  Select <strong>Add to Home Screen</strong>.
-                </div>
-              </li>
-            </ol>
-
-            <button
-              type="button"
-              onClick={() => setShowIosGuide(false)}
-              className="w-full min-h-9 rounded-lg bg-zinc-900 py-2 text-xs font-medium text-white hover:bg-zinc-800"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
-
-      <main className="mx-auto max-w-6xl px-4 py-5 sm:px-6 space-y-6">
-        {/* Minimalist 4-Metric KPI Strip */}
-        <section
-          aria-label="Spending summary metrics"
-          className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-        >
-          <div className="rounded-xl border border-zinc-200/90 bg-white p-4">
-            <div className="flex items-center justify-between text-xs text-zinc-500">
-              <span>Total Spend</span>
-              <span className="font-mono">{analytics.expenseCount} items</span>
-            </div>
-            <p className="mt-1.5 font-mono text-lg sm:text-xl font-semibold text-zinc-900 truncate">
-              {analytics.totalFormatted}
-            </p>
-            <p className="mt-1 font-mono text-[11px] text-zinc-400 truncate">
-              Avg/day: {analytics.averageDailyFormatted}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-zinc-200/90 bg-white p-4">
-            <div className="flex items-center justify-between text-xs">
-              <span className="inline-flex items-center gap-1.5 font-medium text-zinc-700">
-                <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                Must have
-              </span>
-              <span className="font-mono text-zinc-500">
-                {analytics.byTier.MUST_HAVE.percentage}%
-              </span>
-            </div>
-            <p className="mt-1.5 font-mono text-lg sm:text-xl font-semibold text-zinc-900 truncate">
-              {analytics.byTier.MUST_HAVE.formattedAmount}
-            </p>
-            <p className="mt-1 font-mono text-[11px] text-zinc-400 truncate">
-              {analytics.byTier.MUST_HAVE.count} items · &le;60%
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-zinc-200/90 bg-white p-4">
-            <div className="flex items-center justify-between text-xs">
-              <span className="inline-flex items-center gap-1.5 font-medium text-zinc-700">
-                <span className="h-2 w-2 rounded-full bg-amber-500" />
-                Nice to have
-              </span>
-              <span className="font-mono text-zinc-500">
-                {analytics.byTier.NICE_TO_HAVE.percentage}%
-              </span>
-            </div>
-            <p className="mt-1.5 font-mono text-lg sm:text-xl font-semibold text-zinc-900 truncate">
-              {analytics.byTier.NICE_TO_HAVE.formattedAmount}
-            </p>
-            <p className="mt-1 font-mono text-[11px] text-zinc-400 truncate">
-              {analytics.byTier.NICE_TO_HAVE.count} items · &le;30%
-            </p>
-          </div>
-
-          <div
-            className={`rounded-xl border p-4 ${
-              analytics.byTier.WASTED.isOverRecommended
-                ? "border-rose-200 bg-rose-50/30"
-                : "border-zinc-200/90 bg-white"
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="inline-flex items-center gap-1.5 font-medium text-zinc-700">
-                <span className="h-2 w-2 rounded-full bg-rose-600" />
-                Wasted
-              </span>
-              <span className="font-mono text-rose-600 font-medium">
-                {analytics.byTier.WASTED.percentage}%
-              </span>
-            </div>
-            <p className="mt-1.5 font-mono text-lg sm:text-xl font-semibold text-zinc-900 truncate">
-              {analytics.byTier.WASTED.formattedAmount}
-            </p>
-            <p className="mt-1 font-mono text-[11px] text-zinc-400 truncate">
-              {analytics.byTier.WASTED.count} items · Target &le;10%
-            </p>
-          </div>
-        </section>
-
-        {/* Minimalist Natural-Language Expense Input Section */}
-        {showLogSection && (
-          <section
-            aria-labelledby="quick-log-heading"
-            className="rounded-xl border border-zinc-200/90 bg-white p-4 sm:p-5 space-y-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <h2
-                  id="quick-log-heading"
-                  className="text-sm font-semibold text-zinc-900"
-                >
-                  Log Expense
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setShowQuickChips((prev) => !prev)}
-                  className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-medium text-zinc-600 hover:text-zinc-900"
-                >
-                  {showQuickChips ? "Hide presets" : "Presets & units"}
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="expense-date" className="text-xs text-zinc-500">
-                  Date
-                </label>
-                <input
-                  id="expense-date"
-                  type="date"
-                  value={spentAtDate}
-                  onChange={(e) => setSpentAtDate(e.target.value)}
-                  className="min-h-8 rounded-lg border border-zinc-200 bg-zinc-50/50 px-2.5 py-1 font-mono text-xs text-zinc-800"
-                />
-              </div>
-            </div>
-
-            {/* Optional Compact Presets & Shorthand Tokens */}
-            {showQuickChips && (
-              <div className="space-y-2 rounded-lg border border-zinc-100 bg-zinc-50/60 p-2.5">
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap">
-                  {QUICK_EXPENSE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => {
-                        setRawInput((prev) => appendQuickExpenseChip(prev, preset.text));
-                        setPreviewItems(null);
+      <main ref={mainRef} className="mx-auto max-w-3xl px-5 py-8 sm:px-8 sm:py-12">
+        {activeTab === "log" ? (
+          <div className="space-y-8">
+            <section aria-label="Log expenses" className="space-y-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-xl font-medium tracking-tight sm:text-2xl">{dateLabel}</h2>
+                  <label htmlFor="expense-date" className="mt-2 inline-flex">
+                    <span className="sr-only">Expense date</span>
+                    <input id="expense-date" type="date" aria-label="Expense date"
+                      value={spentAtDate}
+                      onChange={(event) => {
+                        if (event.target.value) changeDate(event.target.value === today ? null : event.target.value);
                       }}
-                      className="shrink-0 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 hover:border-zinc-400 active:scale-98 transition"
-                    >
-                      {preset.label}
+                      className="min-h-11 max-w-full rounded-md bg-transparent text-sm text-zinc-500"
+                    />
+                  </label>
+                </div>
+                <div className="flex items-center gap-1">
+                  {spentAtDate && spentAtDate !== today && (
+                    <button type="button" onClick={() => changeDate(null)} className="min-h-11 px-2 text-xs text-zinc-500 hover:text-zinc-900">
+                      Today
                     </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-1.5 overflow-x-auto">
-                  <span className="text-[11px] text-zinc-400 shrink-0">Units:</span>
-                  {QUICK_AMOUNT_TOKENS.map((token) => (
-                    <button
-                      key={token}
-                      type="button"
-                      onClick={() => {
-                        setRawInput((prev) => appendAmountShorthand(prev, token));
-                        setPreviewItems(null);
-                      }}
-                      className="shrink-0 rounded border border-zinc-200 bg-white px-2 py-0.5 font-mono text-[11px] font-medium text-zinc-700 hover:border-zinc-400"
-                    >
-                      +{token}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleDirectParseAndSave} className="space-y-2.5">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                <input
-                  type="text"
-                  value={rawInput}
-                  enterKeyHint="send"
-                  onChange={(e) => {
-                    setRawInput(e.target.value);
-                    if (previewItems) {
-                      setPreviewItems(null);
-                    }
-                  }}
-                  placeholder='coffee 30k, lunch 50k, electricity 850k...'
-                  aria-label="Expense text input"
-                  className="flex-1 min-h-10 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:bg-white focus:outline-hidden"
-                />
-
-                <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handlePreviewParse}
-                    disabled={isParsing || isSaving}
-                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-                  >
-                    {isParsing ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                    Preview
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={isSaving || isParsing}
-                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-                  >
-                    {isSaving ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <PlusCircle className="h-3.5 w-3.5" />
-                    )}
-                    {previewItems ? `Save (${previewItems.length})` : "Log"}
-                  </button>
-                </div>
-              </div>
-            </form>
-
-            {/* Feedback Banner */}
-            {feedback && (
-              <div
-                role="status"
-                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs ${
-                  feedback.tone === "success"
-                    ? "border-emerald-200 bg-emerald-50/60 text-emerald-900"
-                    : "border-rose-200 bg-rose-50/60 text-rose-900"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {feedback.tone === "success" ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                  ) : (
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-600" />
                   )}
-                  <span>{feedback.message}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setFeedback(null)}
-                  aria-label="Dismiss message"
-                  className="p-0.5 text-zinc-400 hover:text-zinc-700"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
-            {/* AI Preview Breakdown */}
-            {previewItems && previewItems.length > 0 && (
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-zinc-900">
-                      Preview ({previewItems.length})
-                    </span>
-                    {previewModel && (
-                      <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 border border-zinc-200">
-                        {previewModel}
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewItems(null)}
-                    className="text-xs text-zinc-500 hover:text-zinc-800"
-                  >
-                    Discard
+                  <button type="button" aria-label="Previous day" disabled={!spentAtDate}
+                    onClick={() => changeDate(shiftDateKey(spentAtDate, -1))}
+                    className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-zinc-50 disabled:opacity-30">
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button type="button" aria-label="Next day" disabled={!spentAtDate}
+                    onClick={() => changeDate(shiftDateKey(spentAtDate, 1))}
+                    className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-zinc-50 disabled:opacity-30">
+                    <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
+              </div>
 
-                <div className="divide-y divide-zinc-200/70">
-                  {previewItems.map((item, idx) => (
-                    <div
-                      key={`${item.title}-${idx}`}
-                      className="py-2 first:pt-0 last:pb-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="flex flex-1 flex-wrap items-center gap-2">
-                        <input
-                          type="text"
-                          value={item.title}
-                          onChange={(e) =>
-                            updatePreviewCandidate(idx, { title: e.target.value })
-                          }
-                          className="w-36 rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-900"
-                        />
-                        <input
-                          type="number"
-                          min={1}
-                          step={1000}
-                          value={item.amountVnd}
-                          onChange={(e) =>
-                            updatePreviewCandidate(idx, {
-                              amountVnd: Math.max(1, Number(e.target.value) || 0),
-                            })
-                          }
-                          className="w-28 rounded border border-zinc-200 bg-white px-2 py-1 font-mono text-xs text-zinc-900"
-                        />
-                        <select
-                          value={item.category}
-                          onChange={(e) =>
-                            updatePreviewCandidate(idx, { category: e.target.value })
-                          }
-                          className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700"
-                        >
-                          {EXPENSE_CATEGORIES.map((cat) => (
-                            <option key={cat} value={cat}>
-                              {cat}
-                            </option>
-                          ))}
-                        </select>
+              <form onSubmit={handleDirectParseAndSave} className="flex gap-2">
+                <input type="text" value={rawInput} enterKeyHint="send"
+                  aria-label="Expense text input" placeholder="coffee 30k, lunch 50k..."
+                  onChange={(event) => {
+                    setRawInput(event.target.value);
+                    setPreviewItems(null);
+                  }}
+                  className="min-h-12 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 text-base placeholder:text-zinc-400 focus:border-zinc-400 focus:bg-white"
+                />
+                <button type="submit" disabled={isSaving || isParsing || !rawInput.trim() || !spentAtDate}
+                  className="min-h-12 shrink-0 rounded-xl bg-zinc-900 px-5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-40">
+                  {isSaving ? "Saving..." : previewItems ? `Save ${previewItems.length}` : "Log"}
+                </button>
+              </form>
+
+              <details>
+                <summary className="w-fit cursor-pointer text-xs text-zinc-400 hover:text-zinc-700">Input options</summary>
+                <div className="mt-4 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_EXPENSE_PRESETS.map((preset) => (
+                      <button key={preset.label} type="button"
+                        onClick={() => {
+                          setRawInput((prev) => appendQuickExpenseChip(prev, preset.text));
+                          setPreviewItems(null);
+                        }}
+                        className="min-h-9 rounded-lg bg-zinc-50 px-3 text-xs text-zinc-600 hover:bg-zinc-100">
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_AMOUNT_TOKENS.map((token) => (
+                      <button key={token} type="button"
+                        onClick={() => {
+                          setRawInput((prev) => appendAmountShorthand(prev, token));
+                          setPreviewItems(null);
+                        }}
+                        className="min-h-9 rounded-lg px-3 font-mono text-xs text-zinc-500 hover:bg-zinc-50">
+                        +{token}
+                      </button>
+                    ))}
+                    <button type="button" onClick={handlePreviewParse}
+                      disabled={isParsing || isSaving || !rawInput.trim() || !spentAtDate}
+                      className="min-h-9 rounded-lg border border-zinc-200 px-3 text-xs disabled:opacity-40">
+                      {isParsing ? "Parsing..." : "Preview before saving"}
+                    </button>
+                  </div>
+                </div>
+              </details>
+
+              {feedback && (
+                <div role="status" className={`flex items-center gap-2 text-sm ${
+                  feedback.tone === "error" ? "text-rose-700" : "text-zinc-600"
+                }`}>
+                  {feedback.tone === "error" ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                  <span className="flex-1">{feedback.message}</span>
+                  <button type="button" aria-label="Dismiss message" onClick={() => setFeedback(null)} className="p-2 text-zinc-400">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+
+              {previewItems && (
+                <div className="space-y-4 rounded-xl border border-zinc-200 p-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <h3 className="font-medium">Preview</h3>
+                    <button type="button" onClick={() => setPreviewItems(null)} className="min-h-9 text-xs text-zinc-500">Discard</button>
+                  </div>
+                  {previewItems.map((item, index) => (
+                    <div key={index} className="space-y-2">
+                      <div className="flex gap-2">
+                        <input aria-label={`Preview expense ${index + 1} title`} value={item.title}
+                          onChange={(event) => updatePreviewCandidate(index, { title: event.target.value })}
+                          className={`${controlClass} min-w-0 flex-1`} />
+                        <input type="number" min={1} aria-label={`Preview expense ${index + 1} amount`}
+                          value={item.amountVnd} onChange={(event) => updatePreviewCandidate(index, { amountVnd: Math.max(1, Number(event.target.value) || 0) })}
+                          className={`${controlClass} w-28 font-mono`} />
                       </div>
-
-                      <div className="flex items-center justify-between sm:justify-end gap-2">
-                        <div className="inline-flex rounded-md border border-zinc-200 bg-white p-0.5">
-                          {SPENDING_TIERS.map((t) => {
-                            const active = item.tier === t;
-                            return (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => updatePreviewCandidate(idx, { tier: t })}
-                                className={`rounded px-2 py-0.5 text-[11px] font-medium transition ${
-                                  active
-                                    ? getTierBadgeClasses(t)
-                                    : "text-zinc-500 hover:text-zinc-900"
-                                }`}
-                              >
-                                {getTierLabel(t)}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removePreviewCandidate(idx)}
-                          className="p-1 text-zinc-400 hover:text-rose-600"
-                          aria-label="Remove preview item"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
+                      <div className="flex gap-2">
+                        <select aria-label={`Preview expense ${index + 1} category`} value={item.category}
+                          onChange={(event) => updatePreviewCandidate(index, { category: event.target.value })}
+                          className={`${controlClass} min-w-0 flex-1`}>
+                          {EXPENSE_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                        </select>
+                        <select aria-label={`Preview expense ${index + 1} tier`} value={item.tier}
+                          onChange={(event) => updatePreviewCandidate(index, { tier: event.target.value as SpendingTierValue })}
+                          className={`${controlClass} min-w-0 flex-1`}>
+                          {SPENDING_TIERS.map((tier) => <option key={tier} value={tier}>{getTierLabel(tier)}</option>)}
+                        </select>
+                        <button type="button" aria-label="Remove preview item" onClick={() => removePreviewCandidate(index)} className="p-2 text-zinc-400 hover:text-rose-600">
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </section>
-        )}
+              )}
+            </section>
 
-        {/* Enhanced Spend Overview & Analytics Report (Monthly / Quarterly / Yearly / Daily) */}
-        {showInsightsSection && <SpendReportPanel analytics={analytics} />}
-
-        {/* Minimalist Expense Ledger Section */}
-        {showLedgerSection && (
-          <section
-            aria-labelledby="ledger-heading"
-            className="rounded-xl border border-zinc-200/90 bg-white p-4 sm:p-5 space-y-4"
-          >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 id="ledger-heading" className="text-sm font-semibold text-zinc-900">
-                  Ledger
-                </h2>
-                <p className="text-xs text-zinc-500">
-                  {filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}{" "}
-                  shown · Click any value tier to reclassify immediately.
+            <section aria-label="Daily expenses" className="border-t border-zinc-100 pt-6">
+              <div className="mb-4 flex items-baseline justify-between gap-4">
+                <h3 className="text-xs text-zinc-400">{snapshot.expenses.length} expense(s)</h3>
+                <p data-testid="day-total" className="font-mono text-lg font-medium">
+                  {spentAtDate ? analytics.totalFormatted : "..."}
                 </p>
               </div>
-
-              {/* Filter Controls */}
-              <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2">
-                <div className="inline-flex overflow-x-auto rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setTierFilter("ALL")}
-                    className={`flex-1 sm:flex-initial whitespace-nowrap rounded-md px-2.5 py-1 font-medium ${
-                      tierFilter === "ALL"
-                        ? "bg-white text-zinc-900 shadow-2xs"
-                        : "text-zinc-500 hover:text-zinc-900"
-                    }`}
-                  >
-                    All ({snapshot.expenses.length})
-                  </button>
-                  {SPENDING_TIERS.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setTierFilter(t)}
-                      className={`flex-1 sm:flex-initial whitespace-nowrap rounded-md px-2.5 py-1 font-medium ${
-                        tierFilter === t
-                          ? "bg-white text-zinc-900 shadow-2xs"
-                          : "text-zinc-500 hover:text-zinc-900"
-                      }`}
-                    >
-                      {getTierLabel(t)} ({analytics.byTier[t].count})
-                    </button>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-2 sm:flex items-center gap-2">
-                  <div className="relative flex items-center">
-                    <Filter className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-zinc-400" />
-                    <select
-                      aria-label="Filter by category"
-                      value={categoryFilter}
-                      onChange={(e) => setCategoryFilter(e.target.value)}
-                      className="w-full min-h-8 rounded-lg border border-zinc-200 bg-white pl-8 pr-3 py-1 text-xs text-zinc-700"
-                    >
-                      <option value="ALL">All Categories</option>
-                      {snapshot.categories.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
+              {snapshot.expenses.length > 0 && (
+                <details className="mb-4">
+                  <summary className="w-fit cursor-pointer text-xs text-zinc-400 hover:text-zinc-700">Search &amp; filters</summary>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <input type="search" aria-label="Search expenses" placeholder="Search..." value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)} className={`${controlClass} min-w-0`} />
+                    <select aria-label="Filter by category" value={categoryFilter}
+                      onChange={(event) => setCategoryFilter(event.target.value)} className={controlClass}>
+                      <option value="ALL">All categories</option>
+                      {snapshot.categories.map((category) => <option key={category}>{category}</option>)}
+                    </select>
+                    <select aria-label="Filter by tier" value={tierFilter}
+                      onChange={(event) => setTierFilter(event.target.value as SpendingTierValue | "ALL")} className={controlClass}>
+                      <option value="ALL">All tiers</option>
+                      {SPENDING_TIERS.map((tier) => <option key={tier} value={tier}>{getTierLabel(tier)}</option>)}
                     </select>
                   </div>
-
-                  <div className="relative flex items-center">
-                    <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-zinc-400" />
-                    <input
-                      type="search"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search..."
-                      aria-label="Search expenses"
-                      className="w-full min-h-8 rounded-lg border border-zinc-200 bg-white pl-8 pr-3 py-1 text-xs text-zinc-800 placeholder:text-zinc-400"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {filteredExpenses.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-zinc-200 py-10 text-center">
-                <p className="text-xs font-medium text-zinc-600">No matching expenses</p>
-                <p className="mt-1 text-xs text-zinc-400">
-                  Log an item like{" "}
-                  <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono">
-                    coffee 30k, lunch 50k
-                  </code>{" "}
-                  above.
+                </details>
+              )}
+              {!spentAtDate ? (
+                <p className="py-8 text-center text-sm text-zinc-400">Loading this day...</p>
+              ) : filteredExpenses.length === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-400">
+                  {snapshot.expenses.length ? "No matching expenses." : "Nothing logged for this day."}
                 </p>
-              </div>
-            ) : (
-              <>
-                {/* Mobile Card List */}
-                <div className="divide-y divide-zinc-100 md:hidden" data-testid="mobile-expense-list">
+              ) : (
+                <div data-testid="expense-list" className="divide-y divide-zinc-100">
                   {filteredExpenses.map((expense) => {
                     const isEditing = editingId === expense.id && editDraft !== null;
-                    const isBusy = busyExpenseId === expense.id;
-
+                    const isBusy = busyExpenseId === expense.id || expense.id.startsWith("optimistic-");
                     return (
-                      <article
-                        key={expense.id}
-                        className={`py-3 first:pt-0 last:pb-0 space-y-2.5 transition ${
-                          isBusy ? "opacity-60" : ""
-                        }`}
-                      >
+                      <article key={expense.id} data-expense-id={expense.id} className={`py-4 ${isBusy ? "opacity-60" : ""}`}>
                         {isEditing ? (
-                          <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-3">
-                            <input
-                              type="text"
-                              value={editDraft.title}
-                              onChange={(e) =>
-                                setEditDraft({ ...editDraft, title: e.target.value })
-                              }
-                              className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-medium text-zinc-900"
-                            />
+                          <div className="space-y-3">
+                            <input aria-label="Expense title" value={editDraft.title}
+                              onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })}
+                              className={`${controlClass} w-full`} />
                             <div className="grid grid-cols-2 gap-2">
-                              <input
-                                type="number"
-                                min={1}
-                                step={1000}
-                                value={editDraft.amountVnd}
-                                onChange={(e) =>
-                                  setEditDraft({
-                                    ...editDraft,
-                                    amountVnd: Math.max(1, Number(e.target.value) || 0),
-                                  })
-                                }
-                                className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-sm text-zinc-900"
-                              />
-                              <select
-                                value={editDraft.category}
-                                onChange={(e) =>
-                                  setEditDraft({ ...editDraft, category: e.target.value })
-                                }
-                                className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm"
-                              >
-                                {EXPENSE_CATEGORIES.map((cat) => (
-                                  <option key={cat} value={cat}>
-                                    {cat}
-                                  </option>
-                                ))}
+                              <input type="number" min={1} aria-label="Expense amount" value={editDraft.amountVnd}
+                                onChange={(event) => setEditDraft({ ...editDraft, amountVnd: Math.max(1, Number(event.target.value) || 0) })}
+                                className={`${controlClass} min-w-0 font-mono`} />
+                              <select aria-label="Expense category" value={editDraft.category}
+                                onChange={(event) => setEditDraft({ ...editDraft, category: event.target.value })}
+                                className={`${controlClass} min-w-0`}>
+                                {EXPENSE_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
                               </select>
                             </div>
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingId(null);
-                                  setEditDraft(null);
-                                }}
-                                className="min-h-8 rounded-lg border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-600"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => saveInlineEdit(expense.id)}
-                                className="min-h-8 rounded-lg bg-zinc-900 px-3 py-1 text-xs font-medium text-white"
-                              >
-                                Save
-                              </button>
+                            <div className="flex items-center justify-between gap-2">
+                              <select aria-label="Expense tier" value={editDraft.tier}
+                                onChange={(event) => setEditDraft({ ...editDraft, tier: event.target.value as SpendingTierValue })}
+                                className={controlClass}>
+                                {SPENDING_TIERS.map((tier) => <option key={tier} value={tier}>{getTierLabel(tier)}</option>)}
+                              </select>
+                              <div className="flex gap-2">
+                                <button type="button" onClick={() => { setEditingId(null); setEditDraft(null); }}
+                                  className="min-h-11 px-3 text-xs text-zinc-500">Cancel</button>
+                                <button type="button" onClick={() => void saveInlineEdit(expense.id)}
+                                  className="min-h-11 rounded-lg bg-zinc-900 px-4 text-xs font-medium text-white">Save</button>
+                              </div>
                             </div>
                           </div>
                         ) : (
-                          <>
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="text-sm font-medium text-zinc-900">
-                                    {expense.title}
-                                  </h3>
-                                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600">
-                                    {expense.category}
-                                  </span>
+                          <div className="flex items-center gap-3">
+                            <h4 className="min-w-0 flex-1 break-words text-sm">{expense.title}</h4>
+                            <p className="shrink-0 font-mono text-sm font-medium">{expense.formattedAmount}</p>
+                            <details className="relative shrink-0">
+                              <summary aria-label={`Options for ${expense.title}`}
+                                className="flex h-11 w-8 cursor-pointer list-none items-center justify-center text-zinc-400 [&::-webkit-details-marker]:hidden">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </summary>
+                              <div className="absolute right-0 top-11 z-10 w-64 space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+                                <p className="text-xs text-zinc-500">{expense.category}</p>
+                                <p className="text-xs leading-relaxed text-zinc-400">{expense.aiReason}</p>
+                                <select aria-label={`Tier for ${expense.title}`} value={expense.tier} disabled={isBusy}
+                                  onChange={(event) => void handleQuickTierChange(expense.id, event.target.value as SpendingTierValue)}
+                                  className={`${controlClass} w-full`}>
+                                  {SPENDING_TIERS.map((tier) => <option key={tier} value={tier}>{getTierLabel(tier)}</option>)}
+                                </select>
+                                <div className="flex gap-2">
+                                  <button type="button" disabled={isBusy} aria-label={`Edit ${expense.title}`}
+                                    onClick={() => startEditing(expense)}
+                                    className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-zinc-50 text-xs disabled:opacity-40">
+                                    <Edit3 className="h-3.5 w-3.5" /> Edit
+                                  </button>
+                                  <button type="button" disabled={isBusy} aria-label={`Delete ${expense.title}`}
+                                    onClick={() => void handleDeleteExpense(expense.id)}
+                                    className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-40">
+                                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                                  </button>
                                 </div>
-                                <p className="mt-0.5 text-xs text-zinc-400">
-                                  {expense.aiReason}
-                                </p>
                               </div>
-
-                              <div className="text-right shrink-0">
-                                <p className="font-mono text-sm font-semibold text-zinc-900">
-                                  {expense.formattedAmount}
-                                </p>
-                                <p className="font-mono text-[11px] text-zinc-400">
-                                  {expense.spentAt.slice(0, 10)}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="grid flex-1 grid-cols-3 gap-1 rounded-lg bg-zinc-100 p-0.5">
-                                {SPENDING_TIERS.map((t) => {
-                                  const active = expense.tier === t;
-                                  return (
-                                    <button
-                                      key={t}
-                                      type="button"
-                                      disabled={isBusy}
-                                      onClick={() => {
-                                        if (expense.tier !== t) {
-                                          void handleQuickTierChange(expense.id, t);
-                                        }
-                                      }}
-                                      className={`min-h-7 rounded-md border text-[11px] font-medium transition ${
-                                        active
-                                          ? getTierBadgeClasses(t)
-                                          : "border-transparent text-zinc-500"
-                                      }`}
-                                    >
-                                      {getTierLabel(t)}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-
-                              <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => startEditing(expense)}
-                                  className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500"
-                                  aria-label={`Edit ${expense.title}`}
-                                >
-                                  <Edit3 className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteExpense(expense.id)}
-                                  className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 hover:text-rose-600"
-                                  aria-label={`Delete ${expense.title}`}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          </>
+                            </details>
+                          </div>
                         )}
                       </article>
                     );
                   })}
                 </div>
-
-                {/* Desktop Minimal Table */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-zinc-200/80 text-zinc-400">
-                        <th className="pb-2 pr-3 font-medium">Expense</th>
-                        <th className="pb-2 px-3 font-medium">Amount</th>
-                        <th className="pb-2 px-3 font-medium">Value Tier</th>
-                        <th className="pb-2 px-3 font-medium">Category</th>
-                        <th className="pb-2 px-3 font-medium">Date</th>
-                        <th className="pb-2 pl-3 text-right font-medium">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100">
-                      {filteredExpenses.map((expense) => {
-                        const isEditing = editingId === expense.id && editDraft !== null;
-                        const isBusy = busyExpenseId === expense.id;
-
-                        return (
-                          <tr
-                            key={expense.id}
-                            className={`hover:bg-zinc-50/70 transition ${
-                              isBusy ? "opacity-60" : ""
-                            }`}
-                          >
-                            <td className="py-2.5 pr-3">
-                              {isEditing ? (
-                                <input
-                                  type="text"
-                                  value={editDraft.title}
-                                  onChange={(e) =>
-                                    setEditDraft({ ...editDraft, title: e.target.value })
-                                  }
-                                  className="w-44 rounded border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-900"
-                                />
-                              ) : (
-                                <div>
-                                  <p className="font-medium text-zinc-900 text-xs">
-                                    {expense.title}
-                                  </p>
-                                  <p className="text-[11px] text-zinc-400">
-                                    {expense.aiReason}
-                                  </p>
-                                </div>
-                              )}
-                            </td>
-
-                            <td className="py-2.5 px-3 whitespace-nowrap">
-                              {isEditing ? (
-                                <input
-                                  type="number"
-                                  min={1}
-                                  step={1000}
-                                  value={editDraft.amountVnd}
-                                  onChange={(e) =>
-                                    setEditDraft({
-                                      ...editDraft,
-                                      amountVnd: Math.max(1, Number(e.target.value) || 0),
-                                    })
-                                  }
-                                  className="w-28 rounded border border-zinc-200 px-2 py-1 font-mono text-xs text-zinc-900"
-                                />
-                              ) : (
-                                <span className="font-mono text-xs font-semibold text-zinc-900">
-                                  {expense.formattedAmount}
-                                </span>
-                              )}
-                            </td>
-
-                            <td className="py-2.5 px-3">
-                              <div className="inline-flex items-center gap-1">
-                                {SPENDING_TIERS.map((t) => {
-                                  const active =
-                                    (isEditing ? editDraft.tier : expense.tier) === t;
-                                  return (
-                                    <button
-                                      key={t}
-                                      type="button"
-                                      disabled={isBusy}
-                                      onClick={() => {
-                                        if (isEditing) {
-                                          setEditDraft({ ...editDraft, tier: t });
-                                        } else if (expense.tier !== t) {
-                                          void handleQuickTierChange(expense.id, t);
-                                        }
-                                      }}
-                                      className={`rounded border px-2 py-0.5 text-[11px] font-medium transition ${
-                                        active
-                                          ? getTierBadgeClasses(t)
-                                          : "border-transparent text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                                      }`}
-                                    >
-                                      {getTierLabel(t)}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </td>
-
-                            <td className="py-2.5 px-3 whitespace-nowrap">
-                              {isEditing ? (
-                                <select
-                                  value={editDraft.category}
-                                  onChange={(e) =>
-                                    setEditDraft({
-                                      ...editDraft,
-                                      category: e.target.value,
-                                    })
-                                  }
-                                  className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs"
-                                >
-                                  {EXPENSE_CATEGORIES.map((cat) => (
-                                    <option key={cat} value={cat}>
-                                      {cat}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="rounded bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600">
-                                  {expense.category}
-                                </span>
-                              )}
-                            </td>
-
-                            <td className="py-2.5 px-3 whitespace-nowrap font-mono text-xs text-zinc-400">
-                              {expense.spentAt.slice(0, 10)}
-                            </td>
-
-                            <td className="py-2.5 pl-3 text-right whitespace-nowrap">
-                              {isEditing ? (
-                                <div className="inline-flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => saveInlineEdit(expense.id)}
-                                    className="rounded bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-800"
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingId(null);
-                                      setEditDraft(null);
-                                    }}
-                                    className="rounded border border-zinc-200 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="inline-flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => startEditing(expense)}
-                                    className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
-                                    title="Edit expense"
-                                    aria-label={`Edit ${expense.title}`}
-                                  >
-                                    <Edit3 className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteExpense(expense.id)}
-                                    className="rounded p-1 text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
-                                    title="Delete expense"
-                                    aria-label={`Delete ${expense.title}`}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </section>
+              )}
+            </section>
+          </div>
+        ) : (
+          <SpendReportPanel expenses={allSnapshot.expenses} today={today} onPeriodChange={revalidateIfStale} />
         )}
       </main>
 
-      {/* Mobile Bottom Tab Bar */}
-      <nav
-        aria-label="Mobile navigation"
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white/95 backdrop-blur-md pb-safe md:hidden"
-      >
-        <div className="grid grid-cols-4 px-2 py-1">
-          <button
-            type="button"
-            onClick={() => setActiveTab("log")}
-            className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] font-medium transition ${
-              activeTab === "log"
-                ? "text-zinc-900 bg-zinc-100"
-                : "text-zinc-400 hover:text-zinc-800"
-            }`}
-          >
-            <PlusCircle className="h-4 w-4" />
-            <span>Log</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("insights")}
-            className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] font-medium transition ${
-              activeTab === "insights"
-                ? "text-zinc-900 bg-zinc-100"
-                : "text-zinc-400 hover:text-zinc-800"
-            }`}
-          >
-            <BarChart3 className="h-4 w-4" />
-            <span>Reports</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("ledger")}
-            className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] font-medium transition ${
-              activeTab === "ledger"
-                ? "text-zinc-900 bg-zinc-100"
-                : "text-zinc-400 hover:text-zinc-800"
-            }`}
-          >
-            <ReceiptText className="h-4 w-4" />
-            <span>Ledger ({snapshot.expenses.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("all")}
-            className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] font-medium transition ${
-              activeTab === "all"
-                ? "text-zinc-900 bg-zinc-100"
-                : "text-zinc-400 hover:text-zinc-800"
-            }`}
-          >
-            <LayoutGrid className="h-4 w-4" />
-            <span>Overview</span>
-          </button>
+      {showIosGuide && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/30 p-5"
+          role="dialog" aria-modal="true" aria-labelledby="ios-guide-title">
+          <div className="w-full max-w-sm space-y-5 rounded-2xl bg-white p-6">
+            <div className="flex items-center justify-between">
+              <h2 id="ios-guide-title" className="text-sm font-medium">Add to Home Screen</h2>
+              <button type="button" aria-label="Close guide" onClick={() => setShowIosGuide(false)} className="p-2 text-zinc-400">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-sm leading-relaxed text-zinc-500">
+              In Safari, tap Share, then choose Add to Home Screen.
+            </p>
+            <button type="button" onClick={() => setShowIosGuide(false)}
+              className="min-h-11 w-full rounded-xl bg-zinc-900 text-sm text-white">Done</button>
+          </div>
         </div>
-      </nav>
+      )}
     </div>
   );
 }

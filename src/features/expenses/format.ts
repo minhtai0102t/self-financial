@@ -76,6 +76,18 @@ export function formatCompactVnd(amountVnd: number): string {
   return `${amountVnd}`;
 }
 
+export function toLocalDateKey(date: Date = new Date()): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+export function shiftDateKey(dateKey: string, days: number): string {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return toLocalDateKey(date);
+}
+
 export function getTierLabel(tier: SpendingTierValue): "Must have" | "Nice to have" | "Wasted" {
   return TIER_METADATA[tier].label;
 }

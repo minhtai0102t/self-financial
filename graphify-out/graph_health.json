@@ -1,0 +1,201 @@
+{
+  "node_count": 380,
+  "unverified_node_count": 0,
+  "raw_edge_count": 864,
+  "non_object_edges": 0,
+  "missing_endpoint_edges": 0,
+  "dangling_endpoint_edges": 3,
+  "external_reference_edges": 1,
+  "self_loop_edges": 1,
+  "valid_candidate_edges": 860,
+  "exact_duplicate_edges": 0,
+  "directed_unique_endpoint_pairs": 840,
+  "directed_same_endpoint_collapsed_edges": 20,
+  "undirected_unique_endpoint_pairs": 840,
+  "undirected_same_endpoint_collapsed_edges": 20,
+  "same_endpoint_group_count": 17,
+  "relation_variant_groups": 11,
+  "source_file_variant_groups": 0,
+  "source_location_variant_groups": 7,
+  "context_variant_groups": 1,
+  "post_build_graph_type": "Graph",
+  "post_build_node_count": 384,
+  "post_build_edge_count": 844,
+  "post_build_error": "",
+  "producer_suppression": {
+    "path": "C:\\Users\\Tai.Pham.Minh\\AppData\\Roaming\\uv\\tools\\graphifyy\\Lib\\site-packages\\graphify\\extract.py",
+    "total_sites": 12,
+    "sites": [
+      {
+        "line": 1830,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2393,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2395,
+        "name": "seen_doc_refs",
+        "tuple_arity": 0,
+        "sample": "seen_doc_refs: set[str] = set()"
+      },
+      {
+        "line": 3062,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 3209,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n.get(\"id\") for n in nodes}"
+      },
+      {
+        "line": 4350,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 4536,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 8160,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 8268,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 8347,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 8872,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 8873,
+        "name": "seen_edges",
+        "tuple_arity": 4,
+        "sample": "seen_edges: set[tuple[str, str, str, str | None]] = set()"
+      }
+    ],
+    "error": ""
+  },
+  "examples": [
+    {
+      "source": "src_app_sign_in_page",
+      "target": "ref_next",
+      "edge_count": 3,
+      "relations": [
+        "imports_from"
+      ],
+      "source_files": [
+        "src/app/sign-in/page.tsx"
+      ],
+      "source_locations": [
+        "L2",
+        "L3",
+        "L4"
+      ],
+      "contexts": [
+        "import"
+      ]
+    },
+    {
+      "source": "src_features_expenses_service",
+      "target": "src_features_expenses_analytics",
+      "edge_count": 3,
+      "relations": [
+        "imports_from",
+        "re_exports"
+      ],
+      "source_files": [
+        "src/features/expenses/service.ts"
+      ],
+      "source_locations": [
+        "L29",
+        "L5"
+      ],
+      "contexts": [
+        "export",
+        "import",
+        "re-export"
+      ]
+    },
+    {
+      "source": "src_lib_auth",
+      "target": "ref_better_auth",
+      "edge_count": 3,
+      "relations": [
+        "imports_from"
+      ],
+      "source_files": [
+        "src/lib/auth.ts"
+      ],
+      "source_locations": [
+        "L3",
+        "L4",
+        "L5"
+      ],
+      "contexts": [
+        "import"
+      ]
+    },
+    {
+      "source": "eslint_config",
+      "target": "ref_eslint_config_next",
+      "edge_count": 2,
+      "relations": [
+        "imports_from"
+      ],
+      "source_files": [
+        "eslint.config.mjs"
+      ],
+      "source_locations": [
+        "L2",
+        "L3"
+      ],
+      "contexts": [
+        "import"
+      ]
+    },
+    {
+      "source": "src_app_layout",
+      "target": "ref_next",
+      "edge_count": 2,
+      "relations": [
+        "imports_from"
+      ],
+      "source_files": [
+        "src/app/layout.tsx"
+      ],
+      "source_locations": [
+        "L1",
+        "L2"
+      ],
+      "contexts": [
+        "import"
+      ]
+    }
+  ]
+}
